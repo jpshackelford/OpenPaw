@@ -191,3 +191,72 @@ class TestDaemonClass:
         """Test stopping when not running."""
         result = daemon.Daemon.stop()
         assert result == 0
+
+
+class TestLogging:
+    """Tests for logging setup."""
+
+    def test_get_log_file_creates_directory(self, temp_openpaws_dir):
+        """Test that get_log_file creates the logs directory."""
+        log_file = daemon.get_log_file()
+        assert log_file.parent.exists()
+        assert log_file.parent.name == "logs"
+        assert log_file.name == "openpaws.log"
+
+    def test_setup_logging_to_file(self, temp_openpaws_dir):
+        """Test setting up file logging."""
+        daemon.setup_logging(log_to_file=True, debug=False)
+        # Verify log file path is accessible
+        assert daemon.get_log_file().parent.exists()
+
+    def test_setup_logging_debug_mode(self, temp_openpaws_dir):
+        """Test setting up logging in debug mode."""
+        daemon.setup_logging(log_to_file=False, debug=True)
+        # Verify debug mode doesn't crash
+
+
+class TestDaemonState:
+    """Tests for DaemonState dataclass."""
+
+    def test_daemon_state_creation(self):
+        """Test creating a DaemonState."""
+        from datetime import datetime
+        from pathlib import Path
+
+        state = daemon.DaemonState(
+            started_at=datetime.now(),
+            config_path=Path("/tmp/test.yaml"),
+        )
+        assert state.started_at is not None
+        assert state.config_path == Path("/tmp/test.yaml")
+
+    def test_daemon_state_defaults(self):
+        """Test DaemonState default values."""
+        from datetime import datetime
+
+        state = daemon.DaemonState(started_at=datetime.now())
+        assert state.config_path is None
+
+
+class TestEdgeCases:
+    """Tests for edge cases and error handling."""
+
+    def test_write_pid_uses_current_pid_by_default(self, temp_openpaws_dir):
+        """Test that write_pid_file uses current PID when not specified."""
+        write_pid_file()
+        read_pid = read_pid_file()
+        assert read_pid == os.getpid()
+
+    def test_is_process_running_with_zombie_detection(self):
+        """Test zombie process detection logic exists."""
+        # The actual zombie detection is hard to test without creating zombies
+        # But we can verify the function handles various states
+        assert is_process_running(os.getpid()) is True
+
+    def test_get_daemon_status_with_uptime(self, temp_openpaws_dir):
+        """Test status includes uptime when process is running."""
+        write_pid_file(os.getpid())
+        status = get_daemon_status()
+        assert status["running"] is True
+        # Uptime should be present (using PID file mtime fallback)
+        assert "uptime" in status or "uptime_seconds" in status
