@@ -393,22 +393,31 @@ Enforces complexity thresholds in CI.
 
 ### Function Length Checker (custom script)
 
-Checks function/method line counts. Located at `scripts/check_function_length.py`.
+Checks function/method line counts with two severity levels. Located at `scripts/check_function_length.py`.
 
 ```bash
-# Show all functions sorted by length
-python scripts/check_function_length.py src/openpaws/ --all
-
-# Check for functions exceeding 50 lines (default)
+# Check with default thresholds (warn: >10 lines, error: >15 lines)
 python scripts/check_function_length.py src/openpaws/
 
-# Check with custom threshold (e.g., 40 lines)
-python scripts/check_function_length.py src/openpaws/ --max-lines 40
+# Show all functions sorted by length (color-coded)
+python scripts/check_function_length.py src/openpaws/ --all
+
+# Custom thresholds
+python scripts/check_function_length.py src/openpaws/ --warn 10 --error 15
+
+# For CI (no colors)
+python scripts/check_function_length.py src/openpaws/ --no-color
 ```
 
+**Thresholds:**
+- ✓ OK: ≤10 lines
+- ⚠ WARNING: >10 lines (consider refactoring)
+- ✗ ERROR: >15 lines (must fix)
+
 **Exit codes:**
-- 0: All functions within threshold
-- 1: One or more functions exceed threshold
+- 0: No errors (warnings allowed)
+- 1: One or more functions exceed error threshold
+- 2: Invalid arguments
 
 ### pylint (statement count)
 
