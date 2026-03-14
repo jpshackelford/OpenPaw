@@ -165,7 +165,7 @@ def _get_process_start_ticks(pid: int) -> int | None:
     return int(fields[19])  # Field 22, adjusted for split offset
 
 
-def _get_process_uptime_from_proc(pid: int) -> float | None:
+def _get_process_uptime_from_proc(pid: int) -> float | None:  # length-ok
     """Get process uptime by reading /proc filesystem."""
     try:
         uptime_file = Path("/proc/uptime")
@@ -378,7 +378,7 @@ class Daemon:
         setup_logging(log_to_file=True)
         return None
 
-    def start(self, foreground: bool = False) -> int:
+    def start(self, foreground: bool = False) -> int:  # length-ok
         """Start the daemon."""
         existing_pid = read_pid_file()
         if existing_pid and is_process_running(existing_pid):

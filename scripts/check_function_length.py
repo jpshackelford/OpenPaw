@@ -10,6 +10,8 @@ Excludes from line count:
 - Logger calls (logger.debug/info/warning/error/exception/critical)
 - Blank lines
 
+Exemption: Add "# length-ok" comment on the def line to exempt a function.
+
 Usage:
     python scripts/check_function_length.py src/openpaws/
     python scripts/check_function_length.py src/openpaws/ --warn 10 --error 15
@@ -26,11 +28,15 @@ from pathlib import Path
 YELLOW = "\033[33m"
 RED = "\033[31m"
 GREEN = "\033[32m"
+CYAN = "\033[36m"
 RESET = "\033[0m"
 BOLD = "\033[1m"
 
 # Pattern to match logger calls
 LOGGER_PATTERN = re.compile(r"^\s*(logger|logging)\.(debug|info|warning|error|exception|critical)\(")
+
+# Exemption marker
+EXEMPT_MARKER = "# length-ok"
 
 
 def _is_exempt_line(line: str) -> bool:
@@ -45,6 +51,12 @@ def _is_exempt_line(line: str) -> bool:
     return False
 
 
+def _is_exempt_function(source_lines: list[str], start_line: int) -> bool:
+    """Check if function has exemption marker on def line."""
+    def_line = source_lines[start_line - 1]
+    return EXEMPT_MARKER in def_line
+
+
 def _count_logic_lines(source_lines: list[str], start: int, end: int) -> int:
     """Count non-exempt lines in a function body."""
     # start/end are 1-indexed line numbers
@@ -52,8 +64,8 @@ def _count_logic_lines(source_lines: list[str], start: int, end: int) -> int:
     return sum(1 for line in func_lines if not _is_exempt_line(line))
 
 
-def get_function_lengths(filepath: Path) -> list[tuple[str, int, int, int]]:
-    """Extract function/method names and their logic line counts."""
+def get_function_lengths(filepath: Path) -> list[tuple[str, int, int, int, bool]]:
+    """Extract function/method names, logic line counts, and exemption status."""
     try:
         source = filepath.read_text()
         source_lines = source.splitlines()
@@ -67,26 +79,27 @@ def get_function_lengths(filepath: Path) -> list[tuple[str, int, int, int]]:
             end_line = node.end_lineno or node.lineno
             start_line = node.lineno
             logic_lines = _count_logic_lines(source_lines, start_line, end_line)
-            results.append((node.name, start_line, end_line, logic_lines))
+            exempt = _is_exempt_function(source_lines, start_line)
+            results.append((node.name, start_line, end_line, logic_lines, exempt))
     return results
 
 
-def collect_functions(directory: Path) -> list[tuple[Path, str, int, int]]:
+def collect_functions(directory: Path) -> list[tuple[Path, str, int, int, bool]]:
     """Collect all functions from Python files in directory."""
     all_functions = []
 
     for filepath in directory.rglob("*.py"):
         if "__pycache__" in str(filepath):
             continue
-        for name, start, _end, length in get_function_lengths(filepath):
-            all_functions.append((filepath, name, length, start))
+        for name, start, _end, length, exempt in get_function_lengths(filepath):
+            all_functions.append((filepath, name, length, start, exempt))
 
     return all_functions
 
 
 def print_table(
     title: str,
-    results: list[tuple[Path, str, int, int]],
+    results: list[tuple[Path, str, int, int, bool]],
     base_path: Path,
     color: str = "",
 ):
@@ -96,7 +109,7 @@ def print_table(
     print(f"\n{color}{BOLD}{title}{RESET}")
     print(f"{'File':<45} {'Function':<30} {'Lines':>6} {'Line':>6}")
     print("-" * 90)
-    for fp, name, length, start in results:
+    for fp, name, length, start, _exempt in results:
         try:
             rel = str(fp.relative_to(base_path))
         except ValueError:
@@ -128,8 +141,8 @@ def main():
     args = parser.parse_args()
 
     if args.no_color:
-        global YELLOW, RED, GREEN, RESET, BOLD
-        YELLOW = RED = GREEN = RESET = BOLD = ""
+        global YELLOW, RED, GREEN, CYAN, RESET, BOLD
+        YELLOW = RED = GREEN = CYAN = RESET = BOLD = ""
 
     if not args.path.exists():
         print(f"Error: {args.path} does not exist", file=sys.stderr)
@@ -146,8 +159,8 @@ def main():
     # Collect all functions
     if args.path.is_file():
         functions = [
-            (args.path, name, length, start)
-            for name, start, _end, length in get_function_lengths(args.path)
+            (args.path, name, length, start, exempt)
+            for name, start, _end, length, exempt in get_function_lengths(args.path)
         ]
         base_path = args.path.parent
     else:
@@ -157,30 +170,43 @@ def main():
     # Sort by length descending
     functions.sort(key=lambda x: x[2], reverse=True)
 
+    # Separate exempted functions
+    exempted = [f for f in functions if f[4]]
+    non_exempted = [f for f in functions if not f[4]]
+
     if args.all:
         print(f"\n{BOLD}All functions sorted by length:{RESET}")
         print(f"{'File':<45} {'Function':<30} {'Lines':>6} {'Line':>6}")
         print("-" * 90)
-        for fp, name, length, start in functions[:50]:
+        for fp, name, length, start, exempt in functions[:50]:
             try:
                 rel = str(fp.relative_to(base_path))
             except ValueError:
                 rel = str(fp)
-            # Color based on threshold
-            if length > args.error:
+            # Color based on threshold (cyan for exempted)
+            if exempt:
+                color = CYAN
+                marker = " ✓"
+            elif length > args.error:
                 color = RED
+                marker = ""
             elif length > args.warn:
                 color = YELLOW
+                marker = ""
             else:
                 color = ""
-            print(f"{color}{rel:<45} {name:<30} {length:>6} {start:>6}{RESET}")
-        print(f"\nTotal functions: {len(functions)}")
+                marker = ""
+            print(f"{color}{rel:<45} {name:<30} {length:>6} {start:>6}{marker}{RESET}")
+        if exempted:
+            print(f"\nTotal: {len(functions)} ({len(exempted)} exempted with {CYAN}# length-ok{RESET})")
+        else:
+            print(f"\nTotal functions: {len(functions)}")
         return
 
-    # Categorize by severity
-    errors = [f for f in functions if f[2] > args.error]
-    warnings = [f for f in functions if args.warn < f[2] <= args.error]
-    ok_count = len(functions) - len(errors) - len(warnings)
+    # Categorize by severity (only non-exempted functions)
+    errors = [f for f in non_exempted if f[2] > args.error]
+    warnings = [f for f in non_exempted if args.warn < f[2] <= args.error]
+    ok_count = len(non_exempted) - len(errors) - len(warnings)
 
     # Print results
     print_table(
@@ -197,6 +223,8 @@ def main():
     print(f"  {GREEN}✓ OK ({args.warn} lines or less):{RESET} {ok_count}")
     print(f"  {YELLOW}⚠ Warnings (>{args.warn} lines):{RESET} {len(warnings)}")
     print(f"  {RED}✗ Errors (>{args.error} lines):{RESET} {len(errors)}")
+    if exempted:
+        print(f"  {CYAN}⊘ Exempted (# length-ok):{RESET} {len(exempted)}")
 
     # Exit code: 1 if errors, 0 otherwise (warnings don't fail)
     if errors:

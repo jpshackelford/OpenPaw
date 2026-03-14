@@ -418,6 +418,15 @@ python scripts/check_function_length.py src/openpaws/ --no-color
 - ✓ OK: ≤10 logic lines (ideal function size)
 - ⚠ WARNING: 11-15 logic lines (consider refactoring)
 - ✗ ERROR: >15 logic lines (must fix)
+- ⊘ EXEMPT: marked with `# length-ok` on def line
+
+**Exemption marker:**
+```python
+def complex_but_necessary(arg):  # length-ok
+    """This function is intentionally longer."""
+    ...
+```
+The `# length-ok` marker exempts a function from the error threshold. Use sparingly and only after human review confirms the function cannot be reasonably refactored.
 
 **Exit codes:**
 - 0: No errors (warnings allowed)
