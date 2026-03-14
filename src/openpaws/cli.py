@@ -1,6 +1,10 @@
 """OpenPaws CLI."""
 
+import sys
+
 import click
+
+from openpaws.daemon import Daemon, get_daemon_status
 
 
 @click.group()
@@ -12,24 +16,62 @@ def main():
 
 @main.command()
 @click.option("--config", "-c", type=click.Path(exists=True), help="Config file path")
-def start(config):
+@click.option("--foreground", "-f", is_flag=True, help="Run in foreground")
+def start(config, foreground):
     """Start the OpenPaws daemon."""
-    click.echo("🐾 Starting OpenPaws...")
-    click.echo("🚧 Not yet implemented")
+    daemon_status = get_daemon_status()
+    if daemon_status["running"]:
+        click.echo(f"🐾 OpenPaws is already running (PID {daemon_status['pid']})")
+        sys.exit(1)
+
+    if foreground:
+        click.echo("🐾 Starting OpenPaws in foreground...")
+    else:
+        click.echo("🐾 Starting OpenPaws daemon...")
+
+    daemon = Daemon(config_path=config)
+    exit_code = daemon.start(foreground=foreground)
+
+    if exit_code == 0 and not foreground:
+        click.echo("✅ OpenPaws daemon started")
+    sys.exit(exit_code)
 
 
 @main.command()
 def stop():
     """Stop the OpenPaws daemon."""
-    click.echo("🐾 Stopping OpenPaws...")
-    click.echo("🚧 Not yet implemented")
+    daemon_status = get_daemon_status()
+    if not daemon_status["running"]:
+        click.echo("🐾 OpenPaws is not running")
+        sys.exit(0)
+
+    click.echo(f"🐾 Stopping OpenPaws (PID {daemon_status['pid']})...")
+    exit_code = Daemon.stop()
+
+    if exit_code == 0:
+        click.echo("✅ OpenPaws daemon stopped")
+    else:
+        click.echo("❌ Failed to stop OpenPaws daemon")
+    sys.exit(exit_code)
 
 
 @main.command()
 def status():
     """Show OpenPaws status."""
+    daemon_status = get_daemon_status()
+
     click.echo("🐾 OpenPaws Status")
-    click.echo("🚧 Not yet implemented")
+    click.echo("─" * 30)
+
+    if daemon_status["running"]:
+        click.echo("  Status:   Running ✅")
+        click.echo(f"  PID:      {daemon_status['pid']}")
+        if "uptime" in daemon_status:
+            click.echo(f"  Uptime:   {daemon_status['uptime']}")
+    else:
+        click.echo("  Status:   Stopped 🔴")
+
+    click.echo(f"  PID file: {daemon_status['pid_file']}")
 
 
 @main.group()
