@@ -5,6 +5,11 @@ Reports functions with two severity levels:
 - WARNING: functions > warn threshold (default: 10 lines)
 - ERROR: functions > error threshold (default: 15 lines)
 
+Excludes from line count:
+- Comment lines (lines starting with #)
+- Logger calls (logger.debug/info/warning/error/exception/critical)
+- Blank lines
+
 Usage:
     python scripts/check_function_length.py src/openpaws/
     python scripts/check_function_length.py src/openpaws/ --warn 10 --error 15
@@ -13,6 +18,7 @@ Usage:
 
 import argparse
 import ast
+import re
 import sys
 from pathlib import Path
 
@@ -23,11 +29,34 @@ GREEN = "\033[32m"
 RESET = "\033[0m"
 BOLD = "\033[1m"
 
+# Pattern to match logger calls
+LOGGER_PATTERN = re.compile(r"^\s*(logger|logging)\.(debug|info|warning|error|exception|critical)\(")
+
+
+def _is_exempt_line(line: str) -> bool:
+    """Check if a line should be excluded from the count."""
+    stripped = line.strip()
+    if not stripped:
+        return True
+    if stripped.startswith("#"):
+        return True
+    if LOGGER_PATTERN.match(stripped):
+        return True
+    return False
+
+
+def _count_logic_lines(source_lines: list[str], start: int, end: int) -> int:
+    """Count non-exempt lines in a function body."""
+    # start/end are 1-indexed line numbers
+    func_lines = source_lines[start - 1 : end]
+    return sum(1 for line in func_lines if not _is_exempt_line(line))
+
 
 def get_function_lengths(filepath: Path) -> list[tuple[str, int, int, int]]:
-    """Extract function/method names and their line counts."""
+    """Extract function/method names and their logic line counts."""
     try:
         source = filepath.read_text()
+        source_lines = source.splitlines()
         tree = ast.parse(source)
     except SyntaxError:
         return []
@@ -37,8 +66,8 @@ def get_function_lengths(filepath: Path) -> list[tuple[str, int, int, int]]:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             end_line = node.end_lineno or node.lineno
             start_line = node.lineno
-            length = end_line - start_line + 1
-            results.append((node.name, start_line, end_line, length))
+            logic_lines = _count_logic_lines(source_lines, start_line, end_line)
+            results.append((node.name, start_line, end_line, logic_lines))
     return results
 
 
