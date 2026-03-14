@@ -28,6 +28,7 @@ from pathlib import Path
 
 from openpaws.config import Config, load_config
 from openpaws.scheduler import Scheduler
+from openpaws.storage import Storage
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +309,7 @@ class Daemon:
         self.config_path = Path(config_path) if config_path else None
         self.config: Config | None = None
         self.scheduler: Scheduler | None = None
+        self.storage: Storage | None = None
         self.state: DaemonState | None = None
         self._shutdown_event: asyncio.Event | None = None
 
@@ -339,9 +341,14 @@ class Daemon:
             logger.warning(f"Config file not found: {e}. Running with defaults.")
             self.config = Config()
 
+    def _setup_storage(self) -> None:
+        """Initialize SQLite storage for state persistence."""
+        self.storage = Storage()
+        logger.info(f"Storage initialized: {self.storage.db_path}")
+
     def _setup_scheduler(self) -> None:
         """Initialize scheduler with configured tasks."""
-        self.scheduler = Scheduler()
+        self.scheduler = Scheduler(storage=self.storage)
         for task_config in self.config.tasks.values():
             self.scheduler.add_task(task_config)
             logger.info(f"Scheduled task: {task_config.name}")
@@ -355,6 +362,7 @@ class Daemon:
         )
 
         self._load_config()
+        self._setup_storage()
         self._setup_scheduler()
 
         logger.info(f"OpenPaws daemon started with PID {os.getpid()}")
