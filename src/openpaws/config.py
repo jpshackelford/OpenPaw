@@ -107,17 +107,22 @@ def _parse_tasks(raw: dict) -> dict[str, TaskConfig]:
     }
 
 
+def _resolve_config_path(path: Path | str | None) -> Path:
+    """Resolve and validate config file path."""
+    if path is None:
+        resolved = Path.home() / ".openpaws" / "config.yaml"
+    else:
+        resolved = Path(path)
+    if not resolved.exists():
+        raise FileNotFoundError(f"Config file not found: {resolved}")
+    return resolved
+
+
 def load_config(path: Path | str | None = None) -> Config:
     """Load configuration from YAML file."""
-    if path is None:
-        path = Path.home() / ".openpaws" / "config.yaml"
-    else:
-        path = Path(path)
+    config_path = _resolve_config_path(path)
 
-    if not path.exists():
-        raise FileNotFoundError(f"Config file not found: {path}")
-
-    with open(path) as f:
+    with open(config_path) as f:
         raw = yaml.safe_load(f)
 
     raw = expand_env_vars_recursive(raw)
