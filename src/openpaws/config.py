@@ -83,44 +83,48 @@ def expand_env_vars_recursive(obj):
         return obj
 
 
+def _parse_channels(raw: dict) -> dict[str, ChannelConfig]:
+    """Parse channel configurations from raw YAML data."""
+    return {
+        name: ChannelConfig(type=name, **cfg)
+        for name, cfg in raw.get("channels", {}).items()
+    }
+
+
+def _parse_groups(raw: dict) -> dict[str, GroupConfig]:
+    """Parse group configurations from raw YAML data."""
+    return {
+        name: GroupConfig(name=name, **cfg)
+        for name, cfg in raw.get("groups", {}).items()
+    }
+
+
+def _parse_tasks(raw: dict) -> dict[str, TaskConfig]:
+    """Parse task configurations from raw YAML data."""
+    return {
+        name: TaskConfig(name=name, **cfg)
+        for name, cfg in raw.get("tasks", {}).items()
+    }
+
+
 def load_config(path: Path | str | None = None) -> Config:
     """Load configuration from YAML file."""
     if path is None:
         path = Path.home() / ".openpaws" / "config.yaml"
     else:
         path = Path(path)
-    
+
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
-    
+
     with open(path) as f:
         raw = yaml.safe_load(f)
-    
-    # Expand environment variables
+
     raw = expand_env_vars_recursive(raw)
-    
-    # Parse channels
-    channels = {}
-    for name, cfg in raw.get("channels", {}).items():
-        channels[name] = ChannelConfig(type=name, **cfg)
-    
-    # Parse groups
-    groups = {}
-    for name, cfg in raw.get("groups", {}).items():
-        groups[name] = GroupConfig(name=name, **cfg)
-    
-    # Parse tasks
-    tasks = {}
-    for name, cfg in raw.get("tasks", {}).items():
-        tasks[name] = TaskConfig(name=name, **cfg)
-    
-    # Parse agent
-    agent_cfg = raw.get("agent", {})
-    agent = AgentConfig(**agent_cfg)
-    
+
     return Config(
-        channels=channels,
-        groups=groups,
-        tasks=tasks,
-        agent=agent,
+        channels=_parse_channels(raw),
+        groups=_parse_groups(raw),
+        tasks=_parse_tasks(raw),
+        agent=AgentConfig(**raw.get("agent", {})),
     )

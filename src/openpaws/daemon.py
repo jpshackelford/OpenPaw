@@ -125,30 +125,81 @@ def remove_pid_file() -> bool:
     return False
 
 
+def _is_zombie_process(pid: int) -> bool:
+    """Check if process is a zombie by reading /proc/[pid]/stat."""
+    try:
+        stat_file = Path(f"/proc/{pid}/stat")
+        if not stat_file.exists():
+            return False
+        stat_content = stat_file.read_text()
+        # State is after the command name in parens
+        close_paren_idx = stat_content.rfind(")")
+        if close_paren_idx > 0:
+            state = stat_content[close_paren_idx + 2 : close_paren_idx + 3]
+            return state == "Z"
+    except OSError:
+        pass
+    return False
+
+
 def is_process_running(pid: int) -> bool:
     """Check if a process with the given PID is actually running (not zombie)."""
     if pid <= 0:
         return False
     try:
-        os.kill(pid, 0)  # Signal 0 just checks existence
+        os.kill(pid, 0)  # Signal 0 checks existence
     except OSError:
         return False
+    return not _is_zombie_process(pid)
 
-    # Check for zombie state on Linux
+
+def _get_process_start_ticks(pid: int) -> int | None:
+    """Get process start time in clock ticks from /proc/[pid]/stat."""
+    stat_file = Path(f"/proc/{pid}/stat")
+    if not stat_file.exists():
+        return None
+    stat_content = stat_file.read_text()
+    # Handle process names with spaces/parens by finding last ')'
+    close_paren_idx = stat_content.rfind(")")
+    fields = stat_content[close_paren_idx + 2 :].split()
+    return int(fields[19])  # Field 22, adjusted for split offset
+
+
+def _get_process_uptime_from_proc(pid: int) -> float | None:
+    """Get process uptime by reading /proc filesystem."""
     try:
-        stat_file = Path(f"/proc/{pid}/stat")
-        if stat_file.exists():
-            stat_content = stat_file.read_text()
-            # State is after the command name in parens
-            close_paren_idx = stat_content.rfind(")")
-            if close_paren_idx > 0:
-                state = stat_content[close_paren_idx + 2 : close_paren_idx + 3]
-                if state == "Z":  # Zombie
-                    return False
+        uptime_file = Path("/proc/uptime")
+        if not uptime_file.exists():
+            return None
+
+        start_ticks = _get_process_start_ticks(pid)
+        if start_ticks is None:
+            return None
+
+        uptime_secs = float(uptime_file.read_text().split()[0])
+        boot_time = time.time() - uptime_secs
+        clock_ticks = os.sysconf("SC_CLK_TCK")
+        start_time = boot_time + (start_ticks / clock_ticks)
+
+        uptime = time.time() - start_time
+        return uptime if uptime >= 0 else None
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _get_uptime_from_pid_file() -> float | None:
+    """Get uptime estimate from PID file modification time.
+
+    Returns uptime in seconds, or None if unable to determine.
+    """
+    try:
+        pid_file = get_pid_file()
+        if pid_file.exists():
+            uptime = time.time() - pid_file.stat().st_mtime
+            return uptime if uptime >= 0 else None
     except OSError:
         pass
-
-    return True
+    return None
 
 
 def get_daemon_status() -> dict:
@@ -163,39 +214,12 @@ def get_daemon_status() -> dict:
     }
 
     if running and pid:
-        # Try to get process start time using PID file mtime as fallback
-        uptime = None
-        try:
-            stat_file = Path(f"/proc/{pid}/stat")
-            if stat_file.exists():
-                # Get system boot time
-                uptime_file = Path("/proc/uptime")
-                if uptime_file.exists():
-                    uptime_secs = float(uptime_file.read_text().split()[0])
-                    boot_time = time.time() - uptime_secs
+        # Try /proc first, fall back to PID file mtime
+        uptime = _get_process_uptime_from_proc(pid)
+        if uptime is None:
+            uptime = _get_uptime_from_pid_file()
 
-                    # Get process start time (field 22 in /proc/pid/stat)
-                    stat_content = stat_file.read_text()
-                    # Handle process names with spaces/parens
-                    close_paren_idx = stat_content.rfind(")")
-                    fields = stat_content[close_paren_idx + 2 :].split()
-                    start_ticks = int(fields[19])  # Field 22, but offset due to split
-                    clock_ticks = os.sysconf("SC_CLK_TCK")
-                    start_time = boot_time + (start_ticks / clock_ticks)
-                    uptime = time.time() - start_time
-        except (OSError, ValueError, IndexError):
-            pass
-
-        # Fallback to PID file mtime if proc method failed or gave invalid result
-        if uptime is None or uptime < 0:
-            try:
-                pid_file = get_pid_file()
-                if pid_file.exists():
-                    uptime = time.time() - pid_file.stat().st_mtime
-            except OSError:
-                pass
-
-        if uptime is not None and uptime >= 0:
+        if uptime is not None:
             status["uptime_seconds"] = int(uptime)
             status["uptime"] = format_uptime(uptime)
 
@@ -221,29 +245,27 @@ def format_uptime(seconds: float) -> str:
         return f"{days}d {hours}h"
 
 
+def _create_file_handler() -> logging.Handler:
+    """Create a file handler for logging."""
+    handler = logging.FileHandler(get_log_file())
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    )
+    return handler
+
+
+def _create_stream_handler() -> logging.Handler:
+    """Create a stream handler for console logging."""
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    return handler
+
+
 def setup_logging(log_to_file: bool = True, debug: bool = False) -> None:
     """Setup logging configuration."""
     level = logging.DEBUG if debug else logging.INFO
-
-    handlers: list[logging.Handler] = []
-
-    if log_to_file:
-        log_file = get_log_file()
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setFormatter(
-            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        )
-        handlers.append(file_handler)
-
-    # Also log to stderr when not daemonized
-    if not log_to_file:
-        stream_handler = logging.StreamHandler()
-        stream_handler.setFormatter(
-            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-        )
-        handlers.append(stream_handler)
-
-    logging.basicConfig(level=level, handlers=handlers, force=True)
+    handler = _create_file_handler() if log_to_file else _create_stream_handler()
+    logging.basicConfig(level=level, handlers=[handler], force=True)
 
 
 def daemonize() -> int:
@@ -304,17 +326,8 @@ class Daemon:
         # For now, just log and return
         return f"Task '{task.config.name}' executed at {datetime.now()}"
 
-    async def run(self) -> None:
-        """Main daemon run loop."""
-        self._shutdown_event = asyncio.Event()
-        self._setup_signal_handlers()
-
-        self.state = DaemonState(
-            started_at=datetime.now(),
-            config_path=self.config_path,
-        )
-
-        # Load config
+    def _load_config(self) -> None:
+        """Load configuration from file."""
         try:
             self.config = load_config(self.config_path)
             logger.info("Configuration loaded successfully")
@@ -322,60 +335,113 @@ class Daemon:
             logger.warning(f"Config file not found: {e}. Running with defaults.")
             self.config = Config()
 
-        # Setup scheduler
+    def _setup_scheduler(self) -> None:
+        """Initialize scheduler with configured tasks."""
         self.scheduler = Scheduler()
         for task_config in self.config.tasks.values():
             self.scheduler.add_task(task_config)
             logger.info(f"Scheduled task: {task_config.name}")
 
+    async def run(self) -> None:
+        """Main daemon run loop."""
+        self._shutdown_event = asyncio.Event()
+        self._setup_signal_handlers()
+        self.state = DaemonState(
+            started_at=datetime.now(), config_path=self.config_path
+        )
+
+        self._load_config()
+        self._setup_scheduler()
+
         logger.info(f"OpenPaws daemon started with PID {os.getpid()}")
         logger.info(f"Loaded {len(self.config.tasks)} tasks")
 
-        # Start scheduler
         self.scheduler.start(self._execute_task)
-
-        # Wait for shutdown signal
         await self._shutdown_event.wait()
 
-        # Cleanup
         if self.scheduler:
             self.scheduler.stop()
         logger.info("OpenPaws daemon stopped")
 
+    def _daemonize_and_check(self) -> int | None:
+        """Fork into background. Returns exit code for parent, None for child."""
+        child_pid = daemonize()
+        if child_pid > 0:
+            # Parent: wait for child to start
+            time.sleep(0.5)
+            return 0 if is_process_running(child_pid) else 1
+        # Child continues
+        setup_logging(log_to_file=True)
+        return None
+
     def start(self, foreground: bool = False) -> int:
         """Start the daemon."""
-        # Check if already running
         existing_pid = read_pid_file()
         if existing_pid and is_process_running(existing_pid):
             logger.error(f"Daemon already running with PID {existing_pid}")
             return 1
 
         if not foreground:
-            # Daemonize - fork and return
-            child_pid = daemonize()
-            if child_pid > 0:
-                # Parent process - wait briefly for child to start, then exit
-                time.sleep(0.5)
-                # Check if child wrote PID file and is running
-                if is_process_running(child_pid):
-                    return 0
-                else:
-                    return 1
-
-            # Child process continues
-            setup_logging(log_to_file=True)
+            result = self._daemonize_and_check()
+            if result is not None:
+                return result
         else:
             setup_logging(log_to_file=False)
 
-        # Write PID file
         write_pid_file()
-
         try:
             asyncio.run(self.run())
         finally:
             remove_pid_file()
-
         return 0
+
+    @staticmethod
+    def _wait_for_process_exit(pid: int, timeout: int) -> bool:
+        """Wait for process to exit. Returns True if exited."""
+        for _ in range(timeout * 10):
+            if not is_process_running(pid):
+                return True
+            time.sleep(0.1)
+        return False
+
+    @staticmethod
+    def _send_signal(pid: int, sig: signal.Signals) -> bool:
+        """Send a signal to a process. Returns True on success."""
+        try:
+            os.kill(pid, sig)
+            return True
+        except OSError as e:
+            logger.error(f"Failed to send signal: {e}")
+            return False
+
+    @staticmethod
+    def _force_kill(pid: int) -> bool:
+        """Send SIGKILL and wait briefly. Returns True if process died."""
+        if not Daemon._send_signal(pid, signal.SIGKILL):
+            return False
+        time.sleep(0.5)
+        return not is_process_running(pid)
+
+    @staticmethod
+    def _stop_running_process(pid: int, timeout: int) -> int:
+        """Stop a running process with SIGTERM, then SIGKILL if needed."""
+        logger.info(f"Sending SIGTERM to PID {pid}")
+        if not Daemon._send_signal(pid, signal.SIGTERM):
+            return 1
+
+        if Daemon._wait_for_process_exit(pid, timeout):
+            logger.info("Daemon stopped successfully")
+            remove_pid_file()
+            return 0
+
+        logger.warning("Process did not exit gracefully, sending SIGKILL")
+        if Daemon._force_kill(pid):
+            logger.info("Daemon killed")
+            remove_pid_file()
+            return 0
+
+        logger.error("Failed to stop daemon")
+        return 1
 
     @staticmethod
     def stop(timeout: int = 10) -> int:
@@ -390,33 +456,4 @@ class Daemon:
             remove_pid_file()
             return 0
 
-        # Send SIGTERM for graceful shutdown
-        logger.info(f"Sending SIGTERM to PID {pid}")
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError as e:
-            logger.error(f"Failed to send signal: {e}")
-            return 1
-
-        # Wait for process to exit
-        for _ in range(timeout * 10):
-            if not is_process_running(pid):
-                logger.info("Daemon stopped successfully")
-                remove_pid_file()
-                return 0
-            time.sleep(0.1)
-
-        # Force kill if still running
-        logger.warning("Process did not exit gracefully, sending SIGKILL")
-        try:
-            os.kill(pid, signal.SIGKILL)
-            time.sleep(0.5)
-            if not is_process_running(pid):
-                logger.info("Daemon killed")
-                remove_pid_file()
-                return 0
-        except OSError:
-            pass
-
-        logger.error("Failed to stop daemon")
-        return 1
+        return Daemon._stop_running_process(pid, timeout)
