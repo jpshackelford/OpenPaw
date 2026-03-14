@@ -371,8 +371,8 @@ class Daemon:
         """Fork into background. Returns exit code for parent, None for child."""
         child_pid = daemonize()
         if child_pid > 0:
-            # Parent: wait for child to start
-            time.sleep(0.5)
+            # Parent: wait briefly for child to start
+            time.sleep(0.1)
             return 0 if is_process_running(child_pid) else 1
         # Child continues
         setup_logging(log_to_file=True)
@@ -423,7 +423,7 @@ class Daemon:
         """Send SIGKILL and wait briefly. Returns True if process died."""
         if not Daemon._send_signal(pid, signal.SIGKILL):
             return False
-        time.sleep(0.5)
+        time.sleep(0.1)
         return not is_process_running(pid)
 
     @staticmethod
@@ -448,7 +448,7 @@ class Daemon:
         return 1
 
     @staticmethod
-    def stop(timeout: int = 10) -> int:
+    def stop(timeout: int = 5) -> int:
         """Stop the running daemon."""
         pid = read_pid_file()
         if pid is None:
