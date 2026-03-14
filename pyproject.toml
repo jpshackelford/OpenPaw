@@ -58,3 +58,25 @@ select = ["E", "F", "I", "UP"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+parallel = true
+source = ["src/openpaws"]
+sigterm = true
+
+[tool.coverage.paths]
+source = [
+    "src/openpaws",
+    "*/site-packages/openpaws",
+]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]

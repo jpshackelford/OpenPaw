@@ -2,6 +2,17 @@
 
 These tests actually start and stop daemon processes, using environment
 variables to isolate each test instance.
+
+Subprocess Coverage
+-------------------
+To collect coverage from daemon subprocesses, we use coverage.py's
+subprocess support. The key mechanism:
+
+1. Set COVERAGE_PROCESS_START to point to .coveragerc
+2. Ensure coverage.process_startup() is called in subprocesses
+3. Use 'coverage combine' to merge data from all processes
+
+Run with: coverage run -m pytest && coverage combine && coverage report
 """
 
 import os
@@ -24,12 +35,23 @@ def isolated_daemon_env(tmp_path):
 
     Returns a dict of environment variables that can be passed to subprocess.
     Each test gets its own directory to avoid conflicts during parallel execution.
+
+    Also configures coverage collection in subprocesses if COVERAGE_PROCESS_START
+    is set in the parent environment.
     """
     env = os.environ.copy()
     env[ENV_OPENPAWS_DIR] = str(tmp_path)
     # Clear any explicit overrides from parent environment
     env.pop(ENV_PID_FILE, None)
     env.pop(ENV_LOG_FILE, None)
+
+    # Propagate coverage settings to subprocesses
+    # If running under coverage, COVERAGE_PROCESS_START will be set
+    # and subprocesses will auto-start coverage collection
+    pyproject = os.path.join(os.path.dirname(__file__), "..", "pyproject.toml")
+    if os.path.exists(pyproject):
+        env["COVERAGE_PROCESS_START"] = os.path.abspath(pyproject)
+
     return env
 
 
@@ -183,6 +205,7 @@ class TestParallelDaemons:
         dir1.mkdir()
         dir2.mkdir()
 
+        # Create isolated environments for each daemon
         env1 = os.environ.copy()
         env1[ENV_OPENPAWS_DIR] = str(dir1)
         env1.pop(ENV_PID_FILE, None)
@@ -192,6 +215,13 @@ class TestParallelDaemons:
         env2[ENV_OPENPAWS_DIR] = str(dir2)
         env2.pop(ENV_PID_FILE, None)
         env2.pop(ENV_LOG_FILE, None)
+
+        # Propagate coverage settings
+        pyproject = os.path.join(os.path.dirname(__file__), "..", "pyproject.toml")
+        if os.path.exists(pyproject):
+            abs_pyproject = os.path.abspath(pyproject)
+            env1["COVERAGE_PROCESS_START"] = abs_pyproject
+            env2["COVERAGE_PROCESS_START"] = abs_pyproject
 
         try:
             # Start both daemons
