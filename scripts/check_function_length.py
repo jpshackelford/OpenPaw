@@ -2,12 +2,12 @@
 """Check function/method length in Python files.
 
 Reports functions with two severity levels:
-- WARNING: functions > warn threshold (default: 15 lines)
-- ERROR: functions > error threshold (default: 30 lines)
+- WARNING: functions > warn threshold (default: 10 lines)
+- ERROR: functions > error threshold (default: 15 lines)
 
 Usage:
     python scripts/check_function_length.py src/openpaws/
-    python scripts/check_function_length.py src/openpaws/ --warn 15 --error 30
+    python scripts/check_function_length.py src/openpaws/ --warn 10 --error 15
     python scripts/check_function_length.py src/openpaws/ --all
 """
 
@@ -81,12 +81,12 @@ def main():
     )
     parser.add_argument("path", type=Path, help="Directory or file to check")
     parser.add_argument(
-        "--warn", "-w", type=int, default=15,
-        help="Warning threshold (default: 15 lines)"
+        "--warn", "-w", type=int, default=10,
+        help="Warning threshold (default: 10 lines)"
     )
     parser.add_argument(
-        "--error", "-e", type=int, default=30,
-        help="Error threshold - must fix (default: 30 lines)"
+        "--error", "-e", type=int, default=15,
+        help="Error threshold - must fix (default: 15 lines)"
     )
     parser.add_argument(
         "--all", "-a", action="store_true",

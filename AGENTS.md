@@ -396,28 +396,38 @@ Enforces complexity thresholds in CI.
 Checks function/method line counts with two severity levels. Located at `scripts/check_function_length.py`.
 
 ```bash
-# Check with default thresholds (warn: >15 lines, error: >30 lines)
+# Check with default thresholds (warn: >10 lines, error: >15 lines)
 python scripts/check_function_length.py src/openpaws/
 
 # Show all functions sorted by length (color-coded)
 python scripts/check_function_length.py src/openpaws/ --all
 
-# Custom thresholds
-python scripts/check_function_length.py src/openpaws/ --warn 15 --error 30
+# Custom thresholds (requires human approval - see policy below)
+python scripts/check_function_length.py src/openpaws/ --warn 10 --error 15
 
 # For CI (no colors)
 python scripts/check_function_length.py src/openpaws/ --no-color
 ```
 
 **Thresholds:**
-- ✓ OK: ≤15 lines (ideal function size)
-- ⚠ WARNING: 16-30 lines (consider refactoring)
-- ✗ ERROR: >30 lines (must fix - too complex)
+- ✓ OK: ≤10 lines (ideal function size)
+- ⚠ WARNING: 11-15 lines (consider refactoring)
+- ✗ ERROR: >15 lines (must fix)
 
 **Exit codes:**
 - 0: No errors (warnings allowed)
 - 1: One or more functions exceed error threshold
 - 2: Invalid arguments
+
+**⚠️ THRESHOLD CHANGE POLICY:**
+> AI agents **MUST NOT** change these thresholds without explicit human approval.
+> 
+> To request a threshold change:
+> 1. Run the checker and present ALL functions exceeding the current thresholds
+> 2. Explain why each function cannot be reasonably refactored
+> 3. Wait for explicit human approval before modifying thresholds
+> 
+> This prevents "gaming the metrics" by loosening standards instead of improving code.
 
 ### pylint (statement count)
 
