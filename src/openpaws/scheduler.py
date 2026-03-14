@@ -80,27 +80,23 @@ class Scheduler:
         
         return due
     
-    async def run_loop(self, executor):
+    async def _execute_task(self, task: ScheduledTask, executor) -> None:
+        """Execute a single task and update its state."""
+        task.status = "running"
+        task.last_run = datetime.now()
+        try:
+            task.last_result = await executor(task)
+        except Exception as e:
+            task.last_result = f"Error: {e}"
+        task.status = "active"
+        task.compute_next_run()
+
+    async def run_loop(self, executor) -> None:
         """Main scheduler loop."""
         self._running = True
-        
         while self._running:
-            due_tasks = self.get_due_tasks()
-            
-            for task in due_tasks:
-                task.status = "running"
-                task.last_run = datetime.now()
-                
-                try:
-                    result = await executor(task)
-                    task.last_result = result
-                except Exception as e:
-                    task.last_result = f"Error: {e}"
-                
-                task.status = "active"
-                task.compute_next_run()
-            
-            # Sleep until next check (every 30 seconds)
+            for task in self.get_due_tasks():
+                await self._execute_task(task, executor)
             await asyncio.sleep(30)
     
     def start(self, executor):

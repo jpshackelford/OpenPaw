@@ -55,3 +55,4 @@ state.db
 # Logs
 logs/
 *.log
+.coverage.*
