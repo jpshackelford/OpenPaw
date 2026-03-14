@@ -150,21 +150,21 @@ class TestUptimeFormatting:
 
     def test_format_uptime_minutes(self):
         """Test formatting uptime in minutes."""
-        assert format_uptime(60) == "1m 0s"
+        assert format_uptime(60) == "1m"  # No trailing zero
         assert format_uptime(90) == "1m 30s"
         assert format_uptime(3599) == "59m 59s"
 
     def test_format_uptime_hours(self):
         """Test formatting uptime in hours."""
-        assert format_uptime(3600) == "1h 0m"
-        assert format_uptime(7200) == "2h 0m"
+        assert format_uptime(3600) == "1h"  # No trailing zero
+        assert format_uptime(7200) == "2h"  # No trailing zero
         assert format_uptime(3660) == "1h 1m"
         assert format_uptime(86399) == "23h 59m"
 
     def test_format_uptime_days(self):
         """Test formatting uptime in days."""
-        assert format_uptime(86400) == "1d 0h"
-        assert format_uptime(172800) == "2d 0h"
+        assert format_uptime(86400) == "1d"  # No trailing zero
+        assert format_uptime(172800) == "2d"  # No trailing zero
         assert format_uptime(90000) == "1d 1h"
 
 

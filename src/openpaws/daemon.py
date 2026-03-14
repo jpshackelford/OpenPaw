@@ -226,23 +226,26 @@ def get_daemon_status() -> dict:
     return status
 
 
+_TIME_UNITS = [
+    (86400, "d"),  # days
+    (3600, "h"),   # hours
+    (60, "m"),     # minutes
+    (1, "s"),      # seconds
+]
+
+
 def format_uptime(seconds: float) -> str:
-    """Format uptime in human-readable form."""
-    seconds = int(seconds)
-    if seconds < 60:
-        return f"{seconds}s"
-    elif seconds < 3600:
-        minutes = seconds // 60
-        secs = seconds % 60
-        return f"{minutes}m {secs}s"
-    elif seconds < 86400:
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
-        return f"{hours}h {minutes}m"
-    else:
-        days = seconds // 86400
-        hours = (seconds % 86400) // 3600
-        return f"{days}d {hours}h"
+    """Format uptime in human-readable form (e.g., '2d 5h', '3h 45m')."""
+    total = int(seconds)
+    parts = []
+    for divisor, suffix in _TIME_UNITS:
+        if total >= divisor:
+            value = total // divisor
+            parts.append(f"{value}{suffix}")
+            total %= divisor
+        if len(parts) == 2:
+            break
+    return " ".join(parts) if parts else "0s"
 
 
 def _create_file_handler() -> logging.Handler:
@@ -268,32 +271,27 @@ def setup_logging(log_to_file: bool = True, debug: bool = False) -> None:
     logging.basicConfig(level=level, handlers=[handler], force=True)
 
 
-def daemonize() -> int:
-    """Fork the process to run as a daemon. Returns child PID to parent, 0 to child."""
-    # Single fork approach - more compatible with containers
-    pid = os.fork()
-    if pid > 0:
-        # Parent - return child PID
-        return pid
-
-    # Child process
-    # Create new session and process group
-    os.setsid()
-
-    # Change working directory to prevent blocking unmount
-    os.chdir("/")
-
-    # Close standard file descriptors
+def _redirect_stdio_to_devnull() -> None:
+    """Redirect stdin, stdout, stderr to /dev/null."""
     sys.stdout.flush()
     sys.stderr.flush()
-
-    # Redirect stdin, stdout, stderr to /dev/null
     with open(os.devnull) as devnull_in:
         os.dup2(devnull_in.fileno(), sys.stdin.fileno())
     with open(os.devnull, "a+") as devnull_out:
         os.dup2(devnull_out.fileno(), sys.stdout.fileno())
         os.dup2(devnull_out.fileno(), sys.stderr.fileno())
 
+
+def daemonize() -> int:
+    """Fork the process to run as a daemon. Returns child PID to parent, 0 to child."""
+    pid = os.fork()
+    if pid > 0:
+        return pid
+
+    # Child: create new session, detach from terminal
+    os.setsid()
+    os.chdir("/")
+    _redirect_stdio_to_devnull()
     return 0
 
 
