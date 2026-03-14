@@ -7,6 +7,32 @@ This file contains instructions for AI agents (and humans) working on the OpenPa
 OpenPaws is a lightweight, always-on AI assistant with scheduled tasks and chat connectors.
 Built on [OpenHands software-agent-sdk](https://github.com/OpenHands/software-agent-sdk).
 
+## Development Tools Summary
+
+| Tool | Purpose | Command |
+|------|---------|---------|
+| **pytest** | Testing | `pytest tests/` |
+| **coverage** | Code coverage (with subprocess support) | `coverage run -m pytest && coverage combine && coverage report` |
+| **ruff** | Linting + import sorting + complexity | `ruff check src/ tests/` |
+| **radon** | Complexity metrics (CC, MI, Halstead) | `radon cc src/openpaws/ -a -s` |
+| **xenon** | Complexity threshold enforcement | `xenon --max-absolute C src/openpaws/` |
+
+## Standard Development Workflow
+
+Before committing changes, run:
+```bash
+# 1. Lint and auto-fix
+ruff check --fix src/ tests/
+
+# 2. Run tests with coverage
+coverage run -m pytest tests/
+coverage combine
+coverage report --fail-under=80
+
+# 3. Check complexity (optional but recommended)
+xenon --max-absolute C --max-modules A --max-average A src/openpaws/
+```
+
 ## Quick Start
 
 ```bash
@@ -300,3 +326,65 @@ coverage run -m pytest tests/ -q && \
 coverage combine && \
 coverage report
 ```
+
+## Tool Reference
+
+### ruff
+
+Fast Python linter that replaces flake8, isort, and more.
+
+**What it checks:**
+- `E`: pycodestyle errors (PEP 8)
+- `F`: pyflakes (undefined names, unused imports)
+- `I`: isort (import ordering)
+- `UP`: pyupgrade (Python version upgrades)
+- `C90`: mccabe complexity (functions with CC > 15)
+
+**Configuration:** `pyproject.toml` under `[tool.ruff]`
+
+### coverage
+
+Measures which lines of code are executed during tests.
+
+**Key features:**
+- `parallel = true`: Collects data from subprocesses (daemon forks)
+- `branch = true`: Measures branch coverage, not just line coverage
+- Subprocess coverage requires `COVERAGE_PROCESS_START` env var
+
+**Workflow:**
+```bash
+coverage run -m pytest tests/  # Run tests, create .coverage.* files
+coverage combine                # Merge subprocess data
+coverage report                 # Show results
+coverage html                   # Generate HTML report
+```
+
+### radon
+
+Computes code complexity metrics.
+
+**Cyclomatic Complexity (CC)** - `radon cc`:
+- Counts decision points (if, for, while, and, or, except)
+- Lower is better: A (1-5), B (6-10), C (11-20), D-F (21+)
+
+**Maintainability Index (MI)** - `radon mi`:
+- Combined score from LOC, CC, and Halstead volume
+- Higher is better: A (20+), B (10-19), C (0-9)
+
+**Halstead Metrics** - `radon hal`:
+- `difficulty`: How hard to understand
+- `effort`: Mental effort to develop
+- `bugs`: Estimated number of bugs (volume / 3000)
+
+### xenon
+
+Enforces complexity thresholds in CI.
+
+**Flags:**
+- `--max-absolute C`: No single block above grade C
+- `--max-modules A`: Each module must average grade A
+- `--max-average A`: Overall codebase must average grade A
+
+**Exit codes:**
+- 0: All thresholds passed
+- 1: Threshold exceeded (fails CI)
