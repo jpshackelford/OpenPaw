@@ -88,12 +88,45 @@ a `.pth` file that enables coverage collection in these subprocesses.
 ### Linting
 
 ```bash
-# Check for issues
+# Check for issues (includes complexity via C90 rule)
 ruff check src/ tests/
 
 # Auto-fix issues
 ruff check --fix src/ tests/
 ```
+
+### Code Complexity
+
+The project uses multiple tools to measure code complexity:
+
+```bash
+# Cyclomatic Complexity (CC) - measures decision points
+# Grades: A (1-5), B (6-10), C (11-20), D (21-30), E (31-40), F (41+)
+radon cc src/openpaws/ -a -s
+
+# Maintainability Index (MI) - overall maintainability score
+# Grades: A (20-100), B (10-19), C (0-9)
+radon mi src/openpaws/ -s
+
+# Raw metrics (LOC, SLOC, comments, etc.)
+radon raw src/openpaws/ -s
+
+# Halstead metrics (effort, difficulty, bugs estimate)
+radon hal src/openpaws/
+
+# Threshold check (fails CI if complexity exceeds limits)
+xenon --max-absolute C --max-modules A --max-average A src/openpaws/
+```
+
+**Current Complexity Status:**
+- Average CC: A (2.9)
+- All modules: A maintainability
+- Highest complexity: `get_daemon_status()` at C (14) - acceptable for status aggregation
+
+**Complexity Thresholds (enforced by ruff C90 + xenon):**
+- Individual functions: max complexity 15 (ruff)
+- Module average: A (xenon)
+- Absolute max: C (xenon)
 
 ### Running the Daemon
 
@@ -232,11 +265,38 @@ ps aux | grep openpaws
 
 When CI is configured, it should run:
 ```yaml
+stages:
+  - quality
+  - test
+
+lint:
+  stage: quality
+  script:
+    - pip install -e ".[dev]"
+    - ruff check src/ tests/
+
+complexity:
+  stage: quality
+  script:
+    - pip install -e ".[dev]"
+    - xenon --max-absolute C --max-modules A --max-average A src/openpaws/
+
 test:
+  stage: test
   script:
     - pip install -e ".[dev]"
     - coverage run -m pytest tests/
     - coverage combine
     - coverage report --fail-under=80
-    - ruff check src/ tests/
+```
+
+## Quick Quality Check
+
+Run all quality checks in one command:
+```bash
+ruff check src/ tests/ && \
+xenon --max-absolute C --max-modules A --max-average A src/openpaws/ && \
+coverage run -m pytest tests/ -q && \
+coverage combine && \
+coverage report
 ```
