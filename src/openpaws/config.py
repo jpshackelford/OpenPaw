@@ -30,12 +30,20 @@ class GroupConfig:
 
 @dataclass
 class TaskConfig:
-    """Configuration for a scheduled task."""
+    """Configuration for a scheduled task.
+    
+    Tasks can be scheduled in three ways (mutually exclusive):
+    - schedule: Cron expression (e.g., "0 9 * * *")
+    - interval: Run every N seconds (e.g., 3600 for every hour)
+    - once: Run at a specific timestamp (ISO format or "YYYY-MM-DD HH:MM")
+    """
     
     name: str
-    schedule: str  # Cron expression
     group: str
     prompt: str
+    schedule: str | None = None  # Cron expression
+    interval: int | None = None  # Seconds between runs
+    once: str | None = None  # ISO timestamp for one-time execution
 
 
 @dataclass 
@@ -102,12 +110,45 @@ def _parse_groups(raw: dict) -> dict[str, GroupConfig]:
     }
 
 
+_INTERVAL_MULTIPLIERS = {"h": 3600, "m": 60, "s": 1}
+
+
+def _parse_interval(value: int | str) -> int:
+    """Parse interval value to seconds (e.g., "1h", "30m", "60s")."""
+    if isinstance(value, int):
+        return value
+    if not isinstance(value, str):
+        raise ValueError(f"Invalid interval value: {value}")
+
+    value = value.strip().lower()
+    if value[-1] in _INTERVAL_MULTIPLIERS:
+        return int(value[:-1]) * _INTERVAL_MULTIPLIERS[value[-1]]
+    return int(value)
+
+
+def _validate_task_schedule(name: str, cfg: dict) -> None:
+    """Validate that a task has exactly one schedule type."""
+    schedule_types = ["schedule", "interval", "once"]
+    present = [t for t in schedule_types if t in cfg and cfg[t] is not None]
+    
+    if len(present) == 0:
+        raise ValueError(f"Task '{name}' must have one of: schedule, interval, or once")
+    if len(present) > 1:
+        raise ValueError(f"Task '{name}' has multiple schedule types: {present}")
+
+
 def _parse_tasks(raw: dict) -> dict[str, TaskConfig]:
     """Parse task configurations from raw YAML data."""
-    return {
-        name: TaskConfig(name=name, **cfg)
-        for name, cfg in raw.get("tasks", {}).items()
-    }
+    tasks = {}
+    for name, cfg in raw.get("tasks", {}).items():
+        _validate_task_schedule(name, cfg)
+        
+        # Parse interval if present
+        if "interval" in cfg and cfg["interval"] is not None:
+            cfg["interval"] = _parse_interval(cfg["interval"])
+        
+        tasks[name] = TaskConfig(name=name, **cfg)
+    return tasks
 
 
 def _resolve_config_path(path: Path | str | None) -> Path:

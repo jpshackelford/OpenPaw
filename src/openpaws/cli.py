@@ -89,6 +89,46 @@ def tasks_list():
     click.echo("🚧 Not yet implemented")
 
 
+def _validate_schedule_options(schedule, every, once) -> tuple[str, str]:
+    """Validate and return the single schedule type and value."""
+    options = [("schedule", schedule), ("every", every), ("once", once)]
+    present = [(n, v) for n, v in options if v is not None]
+
+    if len(present) == 0:
+        click.echo("❌ Error: Must specify one of --schedule, --every, or --once")
+        sys.exit(1)
+    if len(present) > 1:
+        names = [n for n, _ in present]
+        click.echo(f"❌ Error: Specify only one schedule type, got: {', '.join(names)}")
+        sys.exit(1)
+    return present[0]
+
+
+@tasks.command("add")
+@click.option("--schedule", "-s", help="Cron schedule (e.g., '0 9 * * *')")
+@click.option("--every", "-e", help="Interval (e.g., '1h', '30m', '60s')")
+@click.option("--once", "-o", help="One-time timestamp (e.g., '2024-03-15 09:00')")
+@click.option("--group", "-g", required=True, help="Group to send prompt to")
+@click.option("--prompt", "-p", required=True, help="Task prompt")
+@click.argument("name")
+def tasks_add(schedule, every, once, group, prompt, name):
+    """Add a new scheduled task.
+
+    Specify exactly one of --schedule, --every, or --once.
+
+    \b
+    Examples:
+      openpaws tasks add --every 1h -g main -p "Check health" heartbeat
+      openpaws tasks add --once "2024-03-15 09:00" -g main -p "Reminder" remind
+      openpaws tasks add --schedule "0 9 * * *" -g main -p "Daily summary" daily
+    """
+    schedule_type, schedule_value = _validate_schedule_options(schedule, every, once)
+    click.echo(f"📝 Adding task '{name}'...")
+    click.echo(f"   Type: {schedule_type}, Value: {schedule_value}")
+    click.echo(f"   Group: {group}, Prompt: {prompt}")
+    click.echo("🚧 Task persistence not yet implemented")
+
+
 @tasks.command("run")
 @click.argument("name")
 def tasks_run(name):
