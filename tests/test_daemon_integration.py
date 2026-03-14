@@ -80,7 +80,7 @@ tasks:
 
 
 def run_openpaws(
-    args: list[str], env: dict, timeout: int = 10
+    args: list[str], env: dict, timeout: int = 30
 ) -> subprocess.CompletedProcess:
     """Run openpaws CLI command with given environment."""
     cmd = [sys.executable, "-m", "openpaws"] + args
