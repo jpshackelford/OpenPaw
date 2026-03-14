@@ -16,6 +16,8 @@ Built on [OpenHands software-agent-sdk](https://github.com/OpenHands/software-ag
 | **ruff** | Linting + import sorting + complexity | `ruff check src/ tests/` |
 | **radon** | Complexity metrics (CC, MI, Halstead) | `radon cc src/openpaws/ -a -s` |
 | **xenon** | Complexity threshold enforcement | `xenon --max-absolute C src/openpaws/` |
+| **check_function_length.py** | Function line count | `python scripts/check_function_length.py src/ --all` |
+| **pylint** | Statement count per function | `pylint src/ --disable=all --enable=R0915` |
 
 ## Standard Development Workflow
 
@@ -388,3 +390,34 @@ Enforces complexity thresholds in CI.
 **Exit codes:**
 - 0: All thresholds passed
 - 1: Threshold exceeded (fails CI)
+
+### Function Length Checker (custom script)
+
+Checks function/method line counts. Located at `scripts/check_function_length.py`.
+
+```bash
+# Show all functions sorted by length
+python scripts/check_function_length.py src/openpaws/ --all
+
+# Check for functions exceeding 50 lines (default)
+python scripts/check_function_length.py src/openpaws/
+
+# Check with custom threshold (e.g., 40 lines)
+python scripts/check_function_length.py src/openpaws/ --max-lines 40
+```
+
+**Exit codes:**
+- 0: All functions within threshold
+- 1: One or more functions exceed threshold
+
+### pylint (statement count)
+
+Alternative to line count - checks number of statements per function.
+
+```bash
+# Check for functions with more than 30 statements
+pylint src/openpaws/ --disable=all --enable=R0915 --max-statements=30
+```
+
+Note: Statement count is often more meaningful than line count since it
+ignores blank lines and comments.
