@@ -396,23 +396,23 @@ Enforces complexity thresholds in CI.
 Checks function/method line counts with two severity levels. Located at `scripts/check_function_length.py`.
 
 ```bash
-# Check with default thresholds (warn: >10 lines, error: >15 lines)
+# Check with default thresholds (warn: >15 lines, error: >30 lines)
 python scripts/check_function_length.py src/openpaws/
 
 # Show all functions sorted by length (color-coded)
 python scripts/check_function_length.py src/openpaws/ --all
 
 # Custom thresholds
-python scripts/check_function_length.py src/openpaws/ --warn 10 --error 15
+python scripts/check_function_length.py src/openpaws/ --warn 15 --error 30
 
 # For CI (no colors)
 python scripts/check_function_length.py src/openpaws/ --no-color
 ```
 
 **Thresholds:**
-- ✓ OK: ≤10 lines
-- ⚠ WARNING: >10 lines (consider refactoring)
-- ✗ ERROR: >15 lines (must fix)
+- ✓ OK: ≤15 lines (ideal function size)
+- ⚠ WARNING: 16-30 lines (consider refactoring)
+- ✗ ERROR: >30 lines (must fix - too complex)
 
 **Exit codes:**
 - 0: No errors (warnings allowed)
