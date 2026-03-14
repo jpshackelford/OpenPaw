@@ -1,0 +1,242 @@
+# OpenPaws Development Guide
+
+This file contains instructions for AI agents (and humans) working on the OpenPaws codebase.
+
+## Project Overview
+
+OpenPaws is a lightweight, always-on AI assistant with scheduled tasks and chat connectors.
+Built on [OpenHands software-agent-sdk](https://github.com/OpenHands/software-agent-sdk).
+
+## Quick Start
+
+```bash
+# Install in development mode
+pip install -e ".[dev]"
+
+# Run all tests
+pytest tests/
+
+# Run tests with coverage (including subprocess coverage)
+coverage run -m pytest tests/
+coverage combine
+coverage report --show-missing
+
+# Lint code
+ruff check src/ tests/
+
+# Run the CLI
+openpaws --help
+openpaws status
+```
+
+## Project Structure
+
+```
+src/openpaws/
+├── __init__.py      # Package version
+├── __main__.py      # Entry point for `python -m openpaws`
+├── cli.py           # Click CLI commands (start, stop, status, tasks)
+├── config.py        # YAML config parsing with env var expansion
+├── daemon.py        # Daemon process management (PID file, signals, logging)
+└── scheduler.py     # Cron-based task scheduling
+
+tests/
+├── conftest.py              # Pytest config, subprocess coverage setup
+├── test_config.py           # Config parsing tests
+├── test_daemon.py           # Unit tests for daemon module
+├── test_daemon_integration.py  # Integration tests (real process start/stop)
+└── test_scheduler.py        # Scheduler unit tests
+```
+
+## Development Commands
+
+### Testing
+
+```bash
+# Run all tests
+pytest tests/
+
+# Run specific test file
+pytest tests/test_scheduler.py
+
+# Run with verbose output
+pytest tests/ -v
+
+# Run specific test
+pytest tests/test_daemon.py::TestPidFileManagement::test_write_and_read_pid_file
+```
+
+### Code Coverage
+
+The project uses `coverage.py` with subprocess support for measuring code in forked
+daemon processes.
+
+```bash
+# Full coverage workflow
+coverage run -m pytest tests/
+coverage combine           # Merge subprocess data files
+coverage report           # Terminal report
+coverage html             # HTML report in htmlcov/
+
+# Quick check (single command, no subprocess coverage)
+pytest --cov=src/openpaws tests/
+```
+
+**Note**: Integration tests spawn real daemon processes. The `conftest.py` installs
+a `.pth` file that enables coverage collection in these subprocesses.
+
+### Linting
+
+```bash
+# Check for issues
+ruff check src/ tests/
+
+# Auto-fix issues
+ruff check --fix src/ tests/
+```
+
+### Running the Daemon
+
+```bash
+# Start daemon (backgrounds by default)
+openpaws start
+
+# Start with custom config
+openpaws start --config /path/to/config.yaml
+
+# Start in foreground (for debugging)
+openpaws start --foreground
+
+# Check status
+openpaws status
+
+# Stop daemon
+openpaws stop
+```
+
+## Environment Variables
+
+For testing and running multiple instances:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OPENPAWS_DIR` | Base directory for all files | `~/.openpaws` |
+| `OPENPAWS_PID_FILE` | Explicit PID file path | `$OPENPAWS_DIR/openpaws.pid` |
+| `OPENPAWS_LOG_FILE` | Explicit log file path | `$OPENPAWS_DIR/logs/openpaws.log` |
+
+Example for running isolated test instances:
+```bash
+OPENPAWS_DIR=/tmp/test1 openpaws start
+OPENPAWS_DIR=/tmp/test2 openpaws start  # Second instance, no conflict
+```
+
+## Key Design Patterns
+
+### PID File Management
+
+The daemon uses a PID file (`~/.openpaws/openpaws.pid`) to:
+- Prevent multiple instances
+- Enable `stop` command to find the process
+- Track uptime (via file mtime)
+
+### Signal Handling
+
+- `SIGTERM`: Graceful shutdown (cleanup, remove PID file)
+- `SIGINT`: Same as SIGTERM (Ctrl+C in foreground mode)
+
+### Config File
+
+Default location: `~/.openpaws/config.yaml`
+
+```yaml
+channels:
+  telegram:
+    bot_token: ${TELEGRAM_BOT_TOKEN}  # Env var expansion
+
+groups:
+  main:
+    channel: telegram
+    chat_id: "123456789"
+    trigger: "@paw"
+
+tasks:
+  morning-news:
+    schedule: "0 8 * * *"  # Cron syntax
+    group: main
+    prompt: "Summarize top AI news"
+```
+
+## Testing Guidelines
+
+### Unit Tests
+
+- Use `pytest` fixtures for common setup
+- Use `tmp_path` fixture for file-based tests
+- Use `monkeypatch` for environment variables
+
+### Integration Tests
+
+Integration tests in `test_daemon_integration.py` actually start/stop daemon processes:
+
+- Each test gets isolated directory via `OPENPAWS_DIR`
+- Tests can run in parallel without conflicts
+- Coverage is collected from subprocesses
+
+### Mocking
+
+Prefer real implementations over mocks. Only use mocks when:
+- Testing error handling for external services
+- Testing async task execution without waiting
+
+## Current Coverage
+
+| Module | Coverage |
+|--------|----------|
+| `__init__.py` | 100% |
+| `__main__.py` | 100% |
+| `config.py` | 96% |
+| `cli.py` | 87% |
+| `daemon.py` | 85% |
+| `scheduler.py` | 88% |
+| **Overall** | **87%** |
+
+## Common Tasks
+
+### Adding a New CLI Command
+
+1. Add command to `src/openpaws/cli.py`
+2. Add tests to `tests/test_cli.py` (create if needed)
+3. Run `pytest tests/ && ruff check src/`
+
+### Adding a New Config Option
+
+1. Add field to appropriate dataclass in `src/openpaws/config.py`
+2. Update parsing in `load_config()`
+3. Add test in `tests/test_config.py`
+
+### Debugging Daemon Issues
+
+```bash
+# Run in foreground to see output
+openpaws start --foreground
+
+# Check logs
+cat ~/.openpaws/logs/openpaws.log
+
+# Check if running
+openpaws status
+ps aux | grep openpaws
+```
+
+## GitLab CI (TODO)
+
+When CI is configured, it should run:
+```yaml
+test:
+  script:
+    - pip install -e ".[dev]"
+    - coverage run -m pytest tests/
+    - coverage combine
+    - coverage report --fail-under=80
+    - ruff check src/ tests/
+```
