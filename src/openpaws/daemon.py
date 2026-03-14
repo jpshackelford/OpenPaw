@@ -202,27 +202,33 @@ def _get_uptime_from_pid_file() -> float | None:
     return None
 
 
+def _get_uptime(pid: int) -> float | None:
+    """Get process uptime, trying /proc first then PID file mtime."""
+    uptime = _get_process_uptime_from_proc(pid)
+    if uptime is None:
+        uptime = _get_uptime_from_pid_file()
+    return uptime
+
+
+def _add_uptime_to_status(status: dict, pid: int) -> None:
+    """Add uptime fields to status dict if available."""
+    uptime = _get_uptime(pid)
+    if uptime is not None:
+        status["uptime_seconds"] = int(uptime)
+        status["uptime"] = format_uptime(uptime)
+
+
 def get_daemon_status() -> dict:
     """Get the current daemon status."""
     pid = read_pid_file()
     running = pid is not None and is_process_running(pid)
-
     status = {
         "running": running,
         "pid": pid if running else None,
         "pid_file": str(get_pid_file()),
     }
-
     if running and pid:
-        # Try /proc first, fall back to PID file mtime
-        uptime = _get_process_uptime_from_proc(pid)
-        if uptime is None:
-            uptime = _get_uptime_from_pid_file()
-
-        if uptime is not None:
-            status["uptime_seconds"] = int(uptime)
-            status["uptime"] = format_uptime(uptime)
-
+        _add_uptime_to_status(status, pid)
     return status
 
 
