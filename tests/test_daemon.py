@@ -1,14 +1,17 @@
 """Tests for daemon process management."""
 
 import os
-from unittest.mock import patch
 
 import pytest
 
 from openpaws import daemon
 from openpaws.daemon import (
+    ENV_LOG_FILE,
+    ENV_OPENPAWS_DIR,
+    ENV_PID_FILE,
     format_uptime,
     get_daemon_status,
+    get_log_file,
     get_openpaws_dir,
     get_pid_file,
     is_process_running,
@@ -19,10 +22,13 @@ from openpaws.daemon import (
 
 
 @pytest.fixture
-def temp_openpaws_dir(tmp_path):
-    """Use a temporary directory for OpenPaws files."""
-    with patch.object(daemon, "DEFAULT_OPENPAWS_DIR", tmp_path):
-        yield tmp_path
+def temp_openpaws_dir(tmp_path, monkeypatch):
+    """Use a temporary directory for OpenPaws files via environment variable."""
+    monkeypatch.setenv(ENV_OPENPAWS_DIR, str(tmp_path))
+    # Clear any explicit overrides
+    monkeypatch.delenv(ENV_PID_FILE, raising=False)
+    monkeypatch.delenv(ENV_LOG_FILE, raising=False)
+    yield tmp_path
 
 
 class TestPidFileManagement:
@@ -260,3 +266,82 @@ class TestEdgeCases:
         assert status["running"] is True
         # Uptime should be present (using PID file mtime fallback)
         assert "uptime" in status or "uptime_seconds" in status
+
+
+class TestEnvironmentVariables:
+    """Tests for environment variable configuration."""
+
+    def test_openpaws_dir_env_var(self, tmp_path, monkeypatch):
+        """Test OPENPAWS_DIR environment variable."""
+        custom_dir = tmp_path / "custom_openpaws"
+        monkeypatch.setenv(ENV_OPENPAWS_DIR, str(custom_dir))
+        monkeypatch.delenv(ENV_PID_FILE, raising=False)
+        monkeypatch.delenv(ENV_LOG_FILE, raising=False)
+
+        result = get_openpaws_dir()
+        assert result == custom_dir
+        assert result.exists()
+
+    def test_pid_file_env_var(self, tmp_path, monkeypatch):
+        """Test OPENPAWS_PID_FILE environment variable."""
+        custom_pid = tmp_path / "custom" / "my.pid"
+        monkeypatch.setenv(ENV_PID_FILE, str(custom_pid))
+
+        result = get_pid_file()
+        assert result == custom_pid
+        assert result.parent.exists()
+
+    def test_log_file_env_var(self, tmp_path, monkeypatch):
+        """Test OPENPAWS_LOG_FILE environment variable."""
+        custom_log = tmp_path / "custom" / "my.log"
+        monkeypatch.setenv(ENV_LOG_FILE, str(custom_log))
+
+        result = get_log_file()
+        assert result == custom_log
+        assert result.parent.exists()
+
+    def test_pid_file_overrides_dir(self, tmp_path, monkeypatch):
+        """Test that OPENPAWS_PID_FILE takes precedence over OPENPAWS_DIR."""
+        base_dir = tmp_path / "base"
+        custom_pid = tmp_path / "override" / "override.pid"
+
+        monkeypatch.setenv(ENV_OPENPAWS_DIR, str(base_dir))
+        monkeypatch.setenv(ENV_PID_FILE, str(custom_pid))
+
+        result = get_pid_file()
+        assert result == custom_pid
+        assert "base" not in str(result)
+
+    def test_log_file_overrides_dir(self, tmp_path, monkeypatch):
+        """Test that OPENPAWS_LOG_FILE takes precedence over OPENPAWS_DIR."""
+        base_dir = tmp_path / "base"
+        custom_log = tmp_path / "override" / "override.log"
+
+        monkeypatch.setenv(ENV_OPENPAWS_DIR, str(base_dir))
+        monkeypatch.setenv(ENV_LOG_FILE, str(custom_log))
+
+        result = get_log_file()
+        assert result == custom_log
+        assert "base" not in str(result)
+
+    def test_parallel_isolation(self, tmp_path, monkeypatch):
+        """Test that multiple instances can run with different env vars."""
+        # Simulate two isolated instances
+        dir1 = tmp_path / "instance1"
+        dir2 = tmp_path / "instance2"
+
+        # Instance 1
+        monkeypatch.setenv(ENV_OPENPAWS_DIR, str(dir1))
+        monkeypatch.delenv(ENV_PID_FILE, raising=False)
+        pid_file_1 = get_pid_file()
+        write_pid_file(1001)
+
+        # Instance 2
+        monkeypatch.setenv(ENV_OPENPAWS_DIR, str(dir2))
+        pid_file_2 = get_pid_file()
+        write_pid_file(1002)
+
+        # Verify isolation
+        assert pid_file_1 != pid_file_2
+        assert pid_file_1.read_text() == "1001"
+        assert pid_file_2.read_text() == "1002"

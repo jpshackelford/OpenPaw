@@ -1,4 +1,20 @@
-"""Daemon process management for OpenPaws."""
+"""Daemon process management for OpenPaws.
+
+Environment Variables
+---------------------
+OPENPAWS_DIR : str
+    Base directory for OpenPaws files (default: ~/.openpaws).
+    Controls location of PID file, logs, and default config.
+
+OPENPAWS_PID_FILE : str
+    Explicit path to PID file. Overrides OPENPAWS_DIR-based location.
+
+OPENPAWS_LOG_FILE : str
+    Explicit path to log file. Overrides OPENPAWS_DIR-based location.
+
+These environment variables enable running multiple daemon instances
+(e.g., for integration testing) without conflicts.
+"""
 
 import asyncio
 import logging
@@ -15,6 +31,12 @@ from openpaws.scheduler import Scheduler
 
 logger = logging.getLogger(__name__)
 
+# Environment variable names
+ENV_OPENPAWS_DIR = "OPENPAWS_DIR"
+ENV_PID_FILE = "OPENPAWS_PID_FILE"
+ENV_LOG_FILE = "OPENPAWS_LOG_FILE"
+
+# Default values
 DEFAULT_OPENPAWS_DIR = Path.home() / ".openpaws"
 PID_FILE_NAME = "openpaws.pid"
 LOG_DIR_NAME = "logs"
@@ -30,19 +52,44 @@ class DaemonState:
 
 
 def get_openpaws_dir() -> Path:
-    """Get the OpenPaws directory, creating it if needed."""
-    openpaws_dir = DEFAULT_OPENPAWS_DIR
+    """Get the OpenPaws directory, creating it if needed.
+
+    Respects OPENPAWS_DIR environment variable if set.
+    """
+    env_dir = os.environ.get(ENV_OPENPAWS_DIR)
+    if env_dir:
+        openpaws_dir = Path(env_dir)
+    else:
+        openpaws_dir = DEFAULT_OPENPAWS_DIR
     openpaws_dir.mkdir(parents=True, exist_ok=True)
     return openpaws_dir
 
 
 def get_pid_file() -> Path:
-    """Get the path to the PID file."""
+    """Get the path to the PID file.
+
+    Respects OPENPAWS_PID_FILE environment variable if set,
+    otherwise uses OPENPAWS_DIR/openpaws.pid.
+    """
+    env_pid_file = os.environ.get(ENV_PID_FILE)
+    if env_pid_file:
+        pid_file = Path(env_pid_file)
+        pid_file.parent.mkdir(parents=True, exist_ok=True)
+        return pid_file
     return get_openpaws_dir() / PID_FILE_NAME
 
 
 def get_log_file() -> Path:
-    """Get the path to the log file."""
+    """Get the path to the log file.
+
+    Respects OPENPAWS_LOG_FILE environment variable if set,
+    otherwise uses OPENPAWS_DIR/logs/openpaws.log.
+    """
+    env_log_file = os.environ.get(ENV_LOG_FILE)
+    if env_log_file:
+        log_file = Path(env_log_file)
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        return log_file
     log_dir = get_openpaws_dir() / LOG_DIR_NAME
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir / LOG_FILE_NAME
