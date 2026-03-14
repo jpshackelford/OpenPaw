@@ -14,15 +14,19 @@ def main():
     pass
 
 
+def _exit_if_running(status: dict) -> None:
+    """Exit with error if daemon is already running."""
+    if status["running"]:
+        click.echo(f"🐾 OpenPaws is already running (PID {status['pid']})")
+        sys.exit(1)
+
+
 @main.command()
 @click.option("--config", "-c", type=click.Path(exists=True), help="Config file path")
 @click.option("--foreground", "-f", is_flag=True, help="Run in foreground")
 def start(config, foreground):
     """Start the OpenPaws daemon."""
-    daemon_status = get_daemon_status()
-    if daemon_status["running"]:
-        click.echo(f"🐾 OpenPaws is already running (PID {daemon_status['pid']})")
-        sys.exit(1)
+    _exit_if_running(get_daemon_status())
 
     if foreground:
         click.echo("🐾 Starting OpenPaws in foreground...")
@@ -31,7 +35,6 @@ def start(config, foreground):
 
     daemon = Daemon(config_path=config)
     exit_code = daemon.start(foreground=foreground)
-
     if exit_code == 0 and not foreground:
         click.echo("✅ OpenPaws daemon started")
     sys.exit(exit_code)

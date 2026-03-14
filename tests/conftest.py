@@ -69,12 +69,10 @@ def pytest_configure(config):
     """Called after command line options have been parsed."""
     global _coverage_pth_path
 
-    # Set up COVERAGE_PROCESS_START if pyproject.toml exists (contains coverage config)
-    # coverage.py looks for [tool.coverage.*] sections in pyproject.toml
-    pyproject = Path(__file__).parent.parent / "pyproject.toml"
-    if pyproject.exists():
-        os.environ["COVERAGE_PROCESS_START"] = str(pyproject.absolute())
-
+    # Only set up subprocess coverage if explicitly running under coverage
+    # (i.e., COVERAGE_PROCESS_START is already set by `coverage run`)
+    # Don't auto-configure it for regular pytest runs - it can cause hangs
+    if "COVERAGE_PROCESS_START" in os.environ:
         # Install the .pth file for subprocess coverage
         _coverage_pth_path = _install_coverage_pth()
 

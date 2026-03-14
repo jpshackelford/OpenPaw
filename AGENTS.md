@@ -396,28 +396,30 @@ Enforces complexity thresholds in CI.
 Checks function/method **logic line counts** with two severity levels. Located at `scripts/check_function_length.py`.
 
 ```bash
-# Check with default thresholds (warn: >10 lines, error: >15 lines)
+# Check with default thresholds (warn: >8 lines, error: >12 lines)
 python scripts/check_function_length.py src/openpaws/
 
 # Show all functions sorted by length (color-coded)
 python scripts/check_function_length.py src/openpaws/ --all
 
 # Custom thresholds (requires human approval - see policy below)
-python scripts/check_function_length.py src/openpaws/ --warn 10 --error 15
+python scripts/check_function_length.py src/openpaws/ --warn 8 --error 12
 
 # For CI (no colors)
 python scripts/check_function_length.py src/openpaws/ --no-color
 ```
 
 **Excluded from line count (not logic):**
+- Function signature lines (multi-line `def` statements)
+- Docstrings (triple-quoted strings)
 - Blank lines
 - Comment lines (starting with `#`)
 - Logger calls (`logger.debug/info/warning/error/exception/critical`)
 
 **Thresholds:**
-- ✓ OK: ≤10 logic lines (ideal function size)
-- ⚠ WARNING: 11-15 logic lines (consider refactoring)
-- ✗ ERROR: >15 logic lines (must fix)
+- ✓ OK: ≤8 logic lines (ideal function size)
+- ⚠ WARNING: 9-12 logic lines (consider refactoring)
+- ✗ ERROR: >12 logic lines (must fix)
 - ⊘ EXEMPT: marked with `# length-ok` on def line
 
 **Exemption marker:**

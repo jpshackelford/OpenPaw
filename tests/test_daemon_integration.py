@@ -80,7 +80,7 @@ tasks:
 
 
 def run_openpaws(
-    args: list[str], env: dict, timeout: int = 10
+    args: list[str], env: dict, timeout: int = 30
 ) -> subprocess.CompletedProcess:
     """Run openpaws CLI command with given environment."""
     cmd = [sys.executable, "-m", "openpaws"] + args
@@ -111,7 +111,7 @@ class TestDaemonLifecycle:
         assert "Starting" in result.stdout
 
         # Give it a moment to fully start
-        time.sleep(0.5)
+        time.sleep(0.2)
 
         try:
             # Check status
@@ -134,7 +134,7 @@ class TestDaemonLifecycle:
         # Start
         result = run_openpaws(["start"], isolated_daemon_env)
         assert result.returncode == 0
-        time.sleep(0.5)
+        time.sleep(0.2)
 
         # Verify running
         pid_file = tmp_path / "openpaws.pid"
@@ -157,7 +157,7 @@ class TestDaemonLifecycle:
             isolated_daemon_env,
         )
         assert result.returncode == 0
-        time.sleep(0.5)
+        time.sleep(0.2)
 
         try:
             # Check that it's running
@@ -178,7 +178,7 @@ class TestDaemonLifecycle:
         # Start first instance
         result = run_openpaws(["start"], isolated_daemon_env)
         assert result.returncode == 0
-        time.sleep(0.5)
+        time.sleep(0.2)
 
         try:
             # Try to start again
@@ -231,7 +231,7 @@ class TestParallelDaemons:
             result2 = run_openpaws(["start"], env2)
             assert result2.returncode == 0
 
-            time.sleep(0.5)
+            time.sleep(0.2)
 
             # Both should be running with different PIDs
             pid1 = int((dir1 / "openpaws.pid").read_text().strip())
@@ -257,7 +257,7 @@ class TestLogging:
         """Test that log file is created when daemon starts."""
         result = run_openpaws(["start"], isolated_daemon_env)
         assert result.returncode == 0
-        time.sleep(0.5)
+        time.sleep(0.2)
 
         try:
             log_file = tmp_path / "logs" / "openpaws.log"
@@ -270,7 +270,7 @@ class TestLogging:
         """Test that log contains expected startup information."""
         result = run_openpaws(["start"], isolated_daemon_env)
         assert result.returncode == 0
-        time.sleep(0.5)
+        time.sleep(0.2)
 
         try:
             log_file = tmp_path / "logs" / "openpaws.log"
@@ -284,9 +284,9 @@ class TestLogging:
     def test_log_contains_shutdown_info(self, isolated_daemon_env, tmp_path):
         """Test that log contains shutdown information."""
         run_openpaws(["start"], isolated_daemon_env)
-        time.sleep(0.5)
+        time.sleep(0.2)
         run_openpaws(["stop"], isolated_daemon_env)
-        time.sleep(0.5)
+        time.sleep(0.2)
 
         log_file = tmp_path / "logs" / "openpaws.log"
         log_content = log_file.read_text()

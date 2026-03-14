@@ -2,19 +2,20 @@
 """Check function/method length in Python files.
 
 Reports functions with two severity levels:
-- WARNING: functions > warn threshold (default: 10 lines)
-- ERROR: functions > error threshold (default: 15 lines)
+- WARNING: functions > warn threshold (default: 8 lines)
+- ERROR: functions > error threshold (default: 12 lines)
 
-Excludes from line count:
-- Comment lines (lines starting with #)
-- Logger calls (logger.debug/info/warning/error/exception/critical)
+Excludes from line count (not logic):
 - Blank lines
+- Comment lines (starting with #)
+- Docstrings (triple-quoted strings)
+- Logger calls (logger.debug/info/warning/error/exception/critical)
 
 Exemption: Add "# length-ok" comment on the def line to exempt a function.
 
 Usage:
     python scripts/check_function_length.py src/openpaws/
-    python scripts/check_function_length.py src/openpaws/ --warn 10 --error 15
+    python scripts/check_function_length.py src/openpaws/ --warn 8 --error 12
     python scripts/check_function_length.py src/openpaws/ --all
 """
 
@@ -33,22 +34,12 @@ RESET = "\033[0m"
 BOLD = "\033[1m"
 
 # Pattern to match logger calls
-LOGGER_PATTERN = re.compile(r"^\s*(logger|logging)\.(debug|info|warning|error|exception|critical)\(")
+LOGGER_PATTERN = re.compile(
+    r"^\s*(logger|logging)\.(debug|info|warning|error|exception|critical)\("
+)
 
 # Exemption marker
 EXEMPT_MARKER = "# length-ok"
-
-
-def _is_exempt_line(line: str) -> bool:
-    """Check if a line should be excluded from the count."""
-    stripped = line.strip()
-    if not stripped:
-        return True
-    if stripped.startswith("#"):
-        return True
-    if LOGGER_PATTERN.match(stripped):
-        return True
-    return False
 
 
 def _is_exempt_function(source_lines: list[str], start_line: int) -> bool:
@@ -58,10 +49,53 @@ def _is_exempt_function(source_lines: list[str], start_line: int) -> bool:
 
 
 def _count_logic_lines(source_lines: list[str], start: int, end: int) -> int:
-    """Count non-exempt lines in a function body."""
-    # start/end are 1-indexed line numbers
+    """Count logic lines in a function body, excluding non-logic lines.
+
+    Excludes: function signature, blank lines, comments, docstrings, logger calls.
+    """
     func_lines = source_lines[start - 1 : end]
-    return sum(1 for line in func_lines if not _is_exempt_line(line))
+    count = 0
+    in_docstring = False
+    docstring_delim = None
+    past_signature = False
+
+    for line in func_lines:
+        stripped = line.strip()
+
+        # Skip multi-line function signature (until we see line ending with ':')
+        if not past_signature:
+            if stripped.endswith(":"):
+                past_signature = True
+            continue
+
+        # Handle docstrings (multi-line and single-line)
+        if not in_docstring:
+            if stripped.startswith('"""') or stripped.startswith("'''"):
+                delim = stripped[:3]
+                # Check if docstring closes on same line
+                if stripped.count(delim) >= 2 and len(stripped) > 3:
+                    continue  # Single-line docstring, skip it
+                in_docstring = True
+                docstring_delim = delim
+                continue
+        else:
+            if docstring_delim in stripped:
+                in_docstring = False
+            continue
+
+        # Skip blank lines
+        if not stripped:
+            continue
+        # Skip comments
+        if stripped.startswith("#"):
+            continue
+        # Skip logger calls
+        if LOGGER_PATTERN.match(stripped):
+            continue
+
+        count += 1
+
+    return count
 
 
 def get_function_lengths(filepath: Path) -> list[tuple[str, int, int, int, bool]]:
@@ -123,12 +157,12 @@ def main():
     )
     parser.add_argument("path", type=Path, help="Directory or file to check")
     parser.add_argument(
-        "--warn", "-w", type=int, default=10,
-        help="Warning threshold (default: 10 lines)"
+        "--warn", "-w", type=int, default=8,
+        help="Warning threshold (default: 8 lines)"
     )
     parser.add_argument(
-        "--error", "-e", type=int, default=15,
-        help="Error threshold - must fix (default: 15 lines)"
+        "--error", "-e", type=int, default=12,
+        help="Error threshold - must fix (default: 12 lines)"
     )
     parser.add_argument(
         "--all", "-a", action="store_true",
