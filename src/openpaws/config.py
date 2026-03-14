@@ -41,9 +41,12 @@ class TaskConfig:
 @dataclass 
 class AgentConfig:
     """Configuration for the agent."""
-    
+
     model: str = "anthropic/claude-sonnet-4-20250514"
     llm_proxy: str | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
+    system_prompt: str | None = None
 
 
 @dataclass
