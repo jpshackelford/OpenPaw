@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from openpaws.channels.base import ChannelAdapter, IncomingMessage
+from openpaws.channels.slack import SlackAdapter, SlackConfig
 from openpaws.config import Config, load_config
 from openpaws.scheduler import Scheduler
 
@@ -310,6 +312,7 @@ class Daemon:
         self.scheduler: Scheduler | None = None
         self.state: DaemonState | None = None
         self._shutdown_event: asyncio.Event | None = None
+        self._channel_adapters: list[ChannelAdapter] = []
 
     def _setup_signal_handlers(self) -> None:
         """Setup signal handlers for graceful shutdown."""
@@ -330,6 +333,16 @@ class Daemon:
         # For now, just log and return
         return f"Task '{task.config.name}' executed at {datetime.now()}"
 
+    async def _handle_message(self, message: IncomingMessage) -> str | None:
+        """Handle incoming messages from channel adapters."""
+        logger.info(
+            f"Message from {message.channel_type}:{message.channel_id} "
+            f"user={message.user_id}: {message.text[:50]}..."
+        )
+        # TODO: Integrate with software-agent-sdk conversation
+        # For now, just acknowledge
+        return f"Received: {message.text[:100]}"
+
     def _load_config(self) -> None:
         """Load configuration from file."""
         try:
@@ -346,6 +359,55 @@ class Daemon:
             self.scheduler.add_task(task_config)
             logger.info(f"Scheduled task: {task_config.name}")
 
+    def _create_slack_adapter(self, channel_config) -> SlackAdapter | None:
+        """Create a Slack adapter from channel config."""
+        app_token = channel_config.app_token
+        bot_token = channel_config.bot_token
+
+        if not app_token or not bot_token:
+            logger.warning(
+                "Slack channel missing app_token or bot_token, skipping"
+            )
+            return None
+
+        try:
+            slack_config = SlackConfig(app_token=app_token, bot_token=bot_token)
+            return SlackAdapter(slack_config)
+        except ValueError as e:
+            logger.error(f"Invalid Slack config: {e}")
+            return None
+
+    def _setup_channel_adapters(self) -> None:
+        """Initialize channel adapters from configuration."""
+        self._channel_adapters = []
+
+        for name, channel_config in self.config.channels.items():
+            if channel_config.type == "slack":
+                adapter = self._create_slack_adapter(channel_config)
+                if adapter:
+                    self._channel_adapters.append(adapter)
+                    logger.info(f"Configured Slack channel: {name}")
+            else:
+                logger.debug(f"Skipping channel type: {channel_config.type}")
+
+    async def _start_channel_adapters(self) -> None:
+        """Start all configured channel adapters."""
+        for adapter in self._channel_adapters:
+            try:
+                await adapter.start(self._handle_message)
+                logger.info(f"Started {adapter.channel_type} adapter")
+            except Exception as e:
+                logger.error(f"Failed to start {adapter.channel_type} adapter: {e}")
+
+    async def _stop_channel_adapters(self) -> None:
+        """Stop all running channel adapters."""
+        for adapter in self._channel_adapters:
+            try:
+                await adapter.stop()
+                logger.info(f"Stopped {adapter.channel_type} adapter")
+            except Exception as e:
+                logger.error(f"Error stopping {adapter.channel_type} adapter: {e}")
+
     async def run(self) -> None:
         """Main daemon run loop."""
         self._shutdown_event = asyncio.Event()
@@ -356,13 +418,18 @@ class Daemon:
 
         self._load_config()
         self._setup_scheduler()
+        self._setup_channel_adapters()
 
         logger.info(f"OpenPaws daemon started with PID {os.getpid()}")
         logger.info(f"Loaded {len(self.config.tasks)} tasks")
+        logger.info(f"Configured {len(self._channel_adapters)} channel adapters")
 
         self.scheduler.start(self._execute_task)
+        await self._start_channel_adapters()
+
         await self._shutdown_event.wait()
 
+        await self._stop_channel_adapters()
         if self.scheduler:
             self.scheduler.stop()
         logger.info("OpenPaws daemon stopped")

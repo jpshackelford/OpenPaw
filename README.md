@@ -62,6 +62,7 @@ openpaws logs               # View logs
 ## Documentation
 
 - [Design Doc](docs/DESIGN.md) - Architecture and comparison with NanoClaw
+- [Slack Setup](docs/SLACK_SETUP.md) - Complete Slack integration guide
 
 ## Why "OpenPaws"?
 
