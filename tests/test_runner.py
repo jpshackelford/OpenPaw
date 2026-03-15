@@ -346,9 +346,7 @@ class TestRuntimeSelection:
             with pytest.raises(ValueError, match="requires OH_API_KEY"):
                 runner._should_use_cloud(runtime="cloud")
 
-    def test_should_use_cloud_auto_runtime_with_key(
-        self, sample_config, temp_base_dir
-    ):
+    def test_should_use_cloud_auto_runtime_with_key(self, sample_config, temp_base_dir):
         """Test runtime='auto' uses cloud when key is available."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
 
@@ -382,9 +380,7 @@ class TestRuntimeSelection:
             runner._cloud_api_key = None
             with patch.object(runner, "_create_local_conversation") as mock_local:
                 mock_local.return_value = "local-conv"
-                result = runner._create_conversation(
-                    group, None, [], runtime="local"
-                )
+                result = runner._create_conversation(group, None, [], runtime="local")
                 mock_local.assert_called_once()
                 assert result == "local-conv"
 
