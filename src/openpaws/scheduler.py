@@ -1,10 +1,10 @@
-"""Task scheduler with cron support."""
+"""Task scheduler with cron, interval, and one-time support."""
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from croniter import croniter
@@ -15,24 +15,63 @@ if TYPE_CHECKING:
     from openpaws.storage import Storage
 
 
+def _parse_once_timestamp(once_str: str) -> datetime:
+    """Parse a once timestamp string to datetime.
+    
+    Supports ISO format (YYYY-MM-DDTHH:MM:SS) and simple format (YYYY-MM-DD HH:MM).
+    """
+    formats = [
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+    ]
+    for fmt in formats:
+        try:
+            return datetime.strptime(once_str, fmt)
+        except ValueError:
+            continue
+    raise ValueError(f"Invalid timestamp format: {once_str}")
+
+
 @dataclass
 class ScheduledTask:
     """A task with its next run time."""
 
     config: TaskConfig
     next_run: datetime | None = None
-    status: str = "active"  # active, paused, running
+    status: str = "active"  # active, paused, running, completed
     last_run: datetime | None = None
     last_result: str | None = None
 
+    def _compute_cron_next(self) -> datetime:
+        """Compute next run for cron-based schedule."""
+        return croniter(self.config.schedule, datetime.now()).get_next(datetime)
+
+    def _compute_interval_next(self) -> datetime:
+        """Compute next run for interval-based schedule."""
+        base = self.last_run if self.last_run else datetime.now()
+        return base + timedelta(seconds=self.config.interval)
+
+    def _compute_once_next(self) -> datetime | None:
+        """Compute next run for one-time schedule."""
+        if self.last_run:
+            self.status = "completed"
+            return None
+        return _parse_once_timestamp(self.config.once)
+
     def compute_next_run(self) -> datetime | None:
-        """Compute the next run time based on cron expression."""
-        if self.status == "paused":
+        """Compute the next run time based on task schedule type."""
+        if self.status in ("paused", "completed"):
             return None
 
-        base = datetime.now()
-        cron = croniter(self.config.schedule, base)
-        self.next_run = cron.get_next(datetime)
+        if self.config.schedule:
+            self.next_run = self._compute_cron_next()
+        elif self.config.interval:
+            self.next_run = self._compute_interval_next()
+        elif self.config.once:
+            self.next_run = self._compute_once_next()
+
         return self.next_run
 
 
