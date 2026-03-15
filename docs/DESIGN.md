@@ -90,6 +90,12 @@ channels:
     app_token: ${SLACK_APP_TOKEN}
     bot_token: ${SLACK_BOT_TOKEN}
 
+  gmail:
+    credentials_file: ${GMAIL_CREDENTIALS}
+    mode: channel  # or "tool"
+    poll_interval: 60  # seconds
+    filter_label: "openpaws"  # optional
+
 # Groups/Conversations
 groups:
   main:
@@ -201,7 +207,7 @@ openpaws logs --task morning-news
 | Component | Responsibility |
 |-----------|---------------|
 | **Daemon** | Main process, lifecycle management |
-| **Channel Adapters** | Telegram, Slack, Discord, WhatsApp clients |
+| **Channel Adapters** | Slack, Gmail, Telegram clients |
 | **Message Router** | Trigger detection (`@paw`), group routing |
 | **Scheduler** | Cron parsing, task persistence, execution loop |
 | **Group Manager** | Per-group isolation, mounts, session state |
@@ -282,11 +288,15 @@ CREATE TABLE sessions (
 
 ```
 software-agent-sdk (openhands-sdk)
-croniter            # Cron expression parsing
-python-telegram-bot # Telegram adapter
-click               # CLI framework
-pyyaml              # Config parsing
-sqlite3             # State persistence (stdlib)
+croniter                   # Cron expression parsing
+python-telegram-bot        # Telegram adapter
+slack-bolt                 # Slack adapter
+google-auth                # Gmail OAuth
+google-auth-oauthlib       # Gmail OAuth flow
+google-api-python-client   # Gmail API
+click                      # CLI framework
+pyyaml                     # Config parsing
+sqlite3                    # State persistence (stdlib)
 ```
 
 ---
