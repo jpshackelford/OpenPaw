@@ -171,9 +171,7 @@ class TestCloudWorkspace:
             runner._cloud_api_key = None  # Reset cached value
             assert runner.uses_cloud_workspace() is True
 
-    def test_uses_cloud_workspace_with_alt_env_var(
-        self, sample_config, temp_base_dir
-    ):
+    def test_uses_cloud_workspace_with_alt_env_var(self, sample_config, temp_base_dir):
         """Test cloud workspace detection via OPENHANDS_CLOUD_API_KEY."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
 
@@ -229,6 +227,85 @@ class TestCloudWorkspace:
         with patch.dict(os.environ, {"OH_API_KEY": "env-key"}):
             key = runner._get_cloud_api_key()
             assert key == "config-key"
+
+    def test_create_cloud_workspace_builds_correct_params(self, temp_base_dir):
+        """Test that _create_cloud_workspace uses correct config values."""
+        config = Config(
+            agent=AgentConfig(
+                model="anthropic/claude-sonnet-4-20250514",
+                cloud_api_key="test-api-key",
+                cloud_api_url="https://custom.openhands.dev",
+                sandbox_spec_id="custom-spec",
+                keep_alive=True,
+            ),
+        )
+        runner = ConversationRunner(config, base_dir=temp_base_dir)
+
+        with patch(
+            "openhands.workspace.OpenHandsCloudWorkspace"
+        ) as mock_workspace_class:
+            mock_workspace_class.return_value = "mock-workspace"
+            result = runner._create_cloud_workspace()
+
+            mock_workspace_class.assert_called_once_with(
+                cloud_api_url="https://custom.openhands.dev",
+                cloud_api_key="test-api-key",
+                sandbox_spec_id="custom-spec",
+                keep_alive=True,
+            )
+            assert result == "mock-workspace"
+
+    def test_create_cloud_workspace_raises_without_key(self, temp_base_dir):
+        """Test that _create_cloud_workspace raises error without API key."""
+        config = Config(
+            agent=AgentConfig(model="anthropic/claude-sonnet-4-20250514"),
+        )
+        runner = ConversationRunner(config, base_dir=temp_base_dir)
+
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("OH_API_KEY", "OPENHANDS_CLOUD_API_KEY")
+        }
+        with patch.dict(os.environ, env, clear=True):
+            runner._cloud_api_key = None
+            with pytest.raises(ValueError, match="Cloud API key required"):
+                runner._create_cloud_workspace()
+
+    def test_create_conversation_uses_cloud_when_key_set(
+        self, sample_config, temp_base_dir
+    ):
+        """Test _create_conversation uses cloud workspace when API key is set."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+        group = sample_config.groups["main"]
+
+        with patch.dict(os.environ, {"OH_API_KEY": "test-key"}):
+            runner._cloud_api_key = None
+            with patch.object(runner, "_create_cloud_conversation") as mock_cloud:
+                mock_cloud.return_value = "cloud-conv"
+                result = runner._create_conversation(group, None, [])
+                mock_cloud.assert_called_once()
+                assert result == "cloud-conv"
+
+    def test_create_conversation_uses_local_without_key(
+        self, sample_config, temp_base_dir
+    ):
+        """Test _create_conversation uses local workspace without API key."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+        group = sample_config.groups["main"]
+
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("OH_API_KEY", "OPENHANDS_CLOUD_API_KEY")
+        }
+        with patch.dict(os.environ, env, clear=True):
+            runner._cloud_api_key = None
+            with patch.object(runner, "_create_local_conversation") as mock_local:
+                mock_local.return_value = "local-conv"
+                result = runner._create_conversation(group, None, [])
+                mock_local.assert_called_once()
+                assert result == "local-conv"
 
 
 class TestConversationResult:
