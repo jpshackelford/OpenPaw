@@ -208,17 +208,61 @@ openpaws logs --task morning-news
 
 ---
 
+## State Persistence
+
+OpenPaws uses SQLite to persist scheduler state and conversation sessions across daemon restarts.
+
+### Database Location
+
+```
+~/.openpaws/state.db        # Default location
+$OPENPAWS_DIR/state.db      # If OPENPAWS_DIR env var is set
+```
+
+### Schema
+
+```sql
+-- Task state: preserves execution history across restarts
+CREATE TABLE tasks (
+    name TEXT PRIMARY KEY,
+    schedule TEXT,
+    group_name TEXT,
+    prompt TEXT,
+    status TEXT,           -- active, paused, running
+    next_run TEXT,         -- ISO datetime
+    last_run TEXT,         -- ISO datetime
+    last_result TEXT       -- Result/error message
+);
+
+-- Session state: enables conversation resume capability
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    group_name TEXT,
+    created_at TEXT,       -- ISO datetime
+    updated_at TEXT,       -- ISO datetime
+    state BLOB             -- Serialized conversation state
+);
+```
+
+### Behavior
+
+- **Task state restoration**: When the daemon starts, it loads previous task states (last_run, last_result, status) from the database
+- **Automatic persistence**: Task state is saved after each execution and on pause/resume operations
+- **Session storage**: Conversation sessions can be saved and resumed (for future multi-turn chat support)
+
+---
+
 ## v0.1 Scope
 
 ### In Scope
 
-- [ ] Config file parsing (`openpaws.yaml`)
-- [ ] CLI: `start`, `stop`, `status`
+- [x] Config file parsing (`openpaws.yaml`)
+- [x] CLI: `start`, `stop`, `status`
 - [ ] CLI: `tasks list`, `tasks run <name>`
-- [ ] Scheduler: cron-based tasks
+- [x] Scheduler: cron-based tasks
 - [ ] One channel adapter (Telegram)
 - [ ] Single group support
-- [ ] SQLite state persistence
+- [x] SQLite state persistence
 - [ ] Integration with software-agent-sdk Conversation
 
 ### Out of Scope (Future)
