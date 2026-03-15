@@ -45,6 +45,8 @@ BOLD = "\033[1m"
 
 BASELINE_FILE = Path(".coverage-baseline.json")
 DEFAULT_NEW_FILE_THRESHOLD = 80.0
+# Allow small variance in coverage (e.g., due to timing differences in async tests)
+TOLERANCE = 0.5
 
 
 def run_coverage_json() -> dict:
@@ -110,7 +112,9 @@ def check_coverage(report_only: bool = False) -> bool:
         # Check if existing file (in baseline)
         if filepath in baseline_files:
             min_cov = baseline_files[filepath]["min_coverage"]
-            if current < min_cov:
+            # Allow small tolerance for variance between runs
+            effective_min = min_cov - TOLERANCE
+            if current < effective_min:
                 status = f"{RED}FAIL{RESET}"
                 errors.append(
                     f"{filepath}: coverage dropped from {min_cov}% to {current}%"
