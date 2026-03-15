@@ -264,11 +264,32 @@ groups:
     trigger: "@paw"
 
 tasks:
+  # Task running in cloud sandbox (requires OH_API_KEY)
   morning-news:
     schedule: "0 8 * * *"  # Cron syntax
     group: main
     prompt: "Summarize top AI news"
+    runtime: cloud         # Always use cloud sandbox
+  
+  # Task running locally
+  local-backup:
+    schedule: "0 2 * * *"
+    group: main
+    prompt: "Run local backup scripts"
+    runtime: local         # Always use local workspace
+  
+  # Task using default behavior (cloud if available, else local)
+  daily-report:
+    schedule: "0 18 * * *"
+    group: main
+    prompt: "Generate daily report"
+    runtime: auto          # Default: use cloud if OH_API_KEY is set
 ```
+
+**Task runtime options:**
+- `auto` (default): Use cloud sandbox if `OH_API_KEY` is set, otherwise local
+- `cloud`: Always use cloud sandbox (fails if no API key)
+- `local`: Always use local workspace
 
 See [docs/SLACK_SETUP.md](docs/SLACK_SETUP.md) for complete Slack setup instructions.
 

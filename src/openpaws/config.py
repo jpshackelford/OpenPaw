@@ -43,6 +43,11 @@ class TaskConfig:
     - schedule: Cron expression (e.g., "0 9 * * *")
     - interval: Run every N seconds (e.g., 3600 for every hour)
     - once: Run at a specific timestamp (ISO format or "YYYY-MM-DD HH:MM")
+
+    Runtime options:
+    - "auto": Use cloud if OH_API_KEY is set, otherwise local (default)
+    - "cloud": Always use cloud sandbox (requires OH_API_KEY)
+    - "local": Always use local workspace
     """
 
     name: str
@@ -51,6 +56,7 @@ class TaskConfig:
     schedule: str | None = None  # Cron expression
     interval: int | None = None  # Seconds between runs
     once: str | None = None  # ISO timestamp for one-time execution
+    runtime: str = "auto"  # "auto", "cloud", or "local"
 
 
 @dataclass

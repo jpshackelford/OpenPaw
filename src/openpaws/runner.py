@@ -219,14 +219,45 @@ class ConversationRunner:
             callbacks=callbacks,
         )
 
+    def _should_use_cloud(self, runtime: str = "auto") -> bool:
+        """Determine if cloud workspace should be used based on runtime setting.
+
+        Args:
+            runtime: "auto", "cloud", or "local"
+
+        Returns:
+            True if cloud workspace should be used
+
+        Raises:
+            ValueError: If runtime is "cloud" but no API key is available
+        """
+        if runtime == "local":
+            return False
+        if runtime == "cloud":
+            if not self._get_cloud_api_key():
+                raise ValueError(
+                    "Runtime 'cloud' requires OH_API_KEY or OPENHANDS_CLOUD_API_KEY"
+                )
+            return True
+        # runtime == "auto"
+        return self.uses_cloud_workspace()
+
     def _create_conversation(
-        self, group: GroupConfig, conversation_id: UUID | None, callbacks: list
+        self,
+        group: GroupConfig,
+        conversation_id: UUID | None,
+        callbacks: list,
+        runtime: str = "auto",
     ) -> Conversation:
         """Create a Conversation instance for a group.
 
-        Uses cloud workspace if OH_API_KEY is set, otherwise uses local workspace.
+        Args:
+            group: Group configuration
+            conversation_id: Optional conversation ID for persistence
+            callbacks: Event callbacks
+            runtime: "auto", "cloud", or "local"
         """
-        if self.uses_cloud_workspace():
+        if self._should_use_cloud(runtime):
             return self._create_cloud_conversation(group, conversation_id, callbacks)
         return self._create_local_conversation(group, conversation_id, callbacks)
 
@@ -258,8 +289,17 @@ class ConversationRunner:
         *,
         conversation_id: UUID | None = None,
         callbacks: list | None = None,
+        runtime: str = "auto",
     ) -> ConversationResult:
-        """Run a conversation with a prompt for a specific group."""
+        """Run a conversation with a prompt for a specific group.
+
+        Args:
+            group_name: Name of the group to run the conversation for
+            prompt: The prompt to send to the agent
+            conversation_id: Optional conversation ID for persistence
+            callbacks: Optional list of event callbacks
+            runtime: Where to run - "auto", "cloud", or "local"
+        """
         group = self.config.groups.get(group_name)
         if not group:
             return self._group_not_found_result(group_name)
@@ -267,7 +307,9 @@ class ConversationRunner:
         events: list[Event] = []
         all_callbacks = self._build_callbacks(events, callbacks)
         try:
-            conv = self._create_conversation(group, conversation_id, all_callbacks)
+            conv = self._create_conversation(
+                group, conversation_id, all_callbacks, runtime=runtime
+            )
             return self._run_conversation(conv, prompt, events)
         except Exception as e:
             return self._conversation_error(e, events)
@@ -283,7 +325,11 @@ class ConversationRunner:
     async def run_task(self, task: ScheduledTask) -> ConversationResult:
         """Run a scheduled task."""
         cfg = task.config
-        return await self.run_prompt(group_name=cfg.group, prompt=cfg.prompt)
+        return await self.run_prompt(
+            group_name=cfg.group,
+            prompt=cfg.prompt,
+            runtime=cfg.runtime,
+        )
 
     async def run_message(
         self,

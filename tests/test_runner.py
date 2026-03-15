@@ -308,6 +308,87 @@ class TestCloudWorkspace:
                 assert result == "local-conv"
 
 
+class TestRuntimeSelection:
+    """Tests for explicit runtime selection."""
+
+    def test_should_use_cloud_local_runtime(self, sample_config, temp_base_dir):
+        """Test runtime='local' always uses local workspace."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        # Even with cloud key set, should return False for local runtime
+        with patch.dict(os.environ, {"OH_API_KEY": "test-key"}):
+            runner._cloud_api_key = None
+            assert runner._should_use_cloud(runtime="local") is False
+
+    def test_should_use_cloud_cloud_runtime_with_key(
+        self, sample_config, temp_base_dir
+    ):
+        """Test runtime='cloud' uses cloud when key is available."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        with patch.dict(os.environ, {"OH_API_KEY": "test-key"}):
+            runner._cloud_api_key = None
+            assert runner._should_use_cloud(runtime="cloud") is True
+
+    def test_should_use_cloud_cloud_runtime_without_key_raises(
+        self, sample_config, temp_base_dir
+    ):
+        """Test runtime='cloud' raises error when no key is available."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("OH_API_KEY", "OPENHANDS_CLOUD_API_KEY")
+        }
+        with patch.dict(os.environ, env, clear=True):
+            runner._cloud_api_key = None
+            with pytest.raises(ValueError, match="requires OH_API_KEY"):
+                runner._should_use_cloud(runtime="cloud")
+
+    def test_should_use_cloud_auto_runtime_with_key(
+        self, sample_config, temp_base_dir
+    ):
+        """Test runtime='auto' uses cloud when key is available."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        with patch.dict(os.environ, {"OH_API_KEY": "test-key"}):
+            runner._cloud_api_key = None
+            assert runner._should_use_cloud(runtime="auto") is True
+
+    def test_should_use_cloud_auto_runtime_without_key(
+        self, sample_config, temp_base_dir
+    ):
+        """Test runtime='auto' uses local when no key is available."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("OH_API_KEY", "OPENHANDS_CLOUD_API_KEY")
+        }
+        with patch.dict(os.environ, env, clear=True):
+            runner._cloud_api_key = None
+            assert runner._should_use_cloud(runtime="auto") is False
+
+    def test_create_conversation_respects_runtime_local(
+        self, sample_config, temp_base_dir
+    ):
+        """Test _create_conversation uses local when runtime='local'."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+        group = sample_config.groups["main"]
+
+        with patch.dict(os.environ, {"OH_API_KEY": "test-key"}):
+            runner._cloud_api_key = None
+            with patch.object(runner, "_create_local_conversation") as mock_local:
+                mock_local.return_value = "local-conv"
+                result = runner._create_conversation(
+                    group, None, [], runtime="local"
+                )
+                mock_local.assert_called_once()
+                assert result == "local-conv"
+
+
 class TestConversationResult:
     """Tests for ConversationResult."""
 
@@ -353,7 +434,7 @@ class TestRunTask:
 
     @pytest.mark.asyncio
     async def test_run_task_calls_run_prompt(self, sample_config, temp_base_dir):
-        """Test that run_task delegates to run_prompt."""
+        """Test that run_task delegates to run_prompt with runtime."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
 
         task = ScheduledTask(config=sample_config.tasks["morning"])
@@ -369,6 +450,7 @@ class TestRunTask:
             mock_run_prompt.assert_called_once_with(
                 group_name="main",
                 prompt="Good morning! What's the weather?",
+                runtime="auto",  # Default runtime from TaskConfig
             )
 
 
