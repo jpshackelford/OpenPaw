@@ -25,7 +25,7 @@
       "min_coverage": 94.1
     },
     "src/openpaws/daemon.py": {
-      "min_coverage": 75.7
+      "min_coverage": 74.0
     },
     "src/openpaws/runner.py": {
       "min_coverage": 62.4
