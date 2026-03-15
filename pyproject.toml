@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 authors = [
     { name = "OpenHands", email = "contact@all-hands.dev" }
 ]
-keywords = ["ai", "agent", "assistant", "scheduler", "telegram", "slack"]
+keywords = ["ai", "agent", "assistant", "scheduler", "telegram", "slack", "gmail"]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Developers",
@@ -29,6 +29,9 @@ dependencies = [
     "croniter>=2.0.0",
     "python-telegram-bot>=20.0",
     "slack-bolt>=1.18.0",
+    "google-auth>=2.0.0",
+    "google-auth-oauthlib>=1.0.0",
+    "google-api-python-client>=2.0.0",
 ]
 
 [project.optional-dependencies]

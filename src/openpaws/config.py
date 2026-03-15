@@ -9,11 +9,18 @@ import yaml
 
 @dataclass
 class ChannelConfig:
-    """Configuration for a channel (Telegram, Slack, etc.)."""
+    """Configuration for a channel (Telegram, Slack, Gmail, etc.)."""
     
     type: str
+    # Slack/Telegram tokens
     bot_token: str | None = None
     app_token: str | None = None
+    # Gmail-specific settings
+    credentials_file: str | None = None
+    token_file: str | None = None
+    mode: str | None = None  # "channel" or "tool" for Gmail
+    poll_interval: int = 60  # seconds, for Gmail polling
+    filter_label: str | None = None  # Gmail label filter
 
 
 @dataclass
