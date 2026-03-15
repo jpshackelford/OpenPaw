@@ -365,6 +365,178 @@ class TestBlueBubblesClient:
         assert client._session is None
 
 
+class TestIMessageAdapterHelperMethods:
+    """Tests for IMessageAdapter helper methods."""
+
+    @pytest.fixture
+    def adapter(self):
+        """Create adapter with valid config."""
+        config = BlueBubblesConfig(
+            server_url="http://192.168.1.100:1234",
+            password="test-password",
+        )
+        return IMessageAdapter(config)
+
+    def test_get_user_name_dm(self, adapter):
+        """Test getting user name for DM."""
+        data = {"handle": {"address": "+15551234567"}}
+        chat_guid = "iMessage;-;+15551234567"
+        result = adapter._get_user_name(data, chat_guid)
+        assert result == "+15551234567"
+
+    def test_get_user_name_group_with_display_name(self, adapter):
+        """Test getting user name for group with display name."""
+        data = {
+            "handle": {"address": "+15551234567"},
+            "chats": [{"guid": "iMessage;+;chat123", "displayName": "Family"}],
+        }
+        chat_guid = "iMessage;+;chat123"
+        result = adapter._get_user_name(data, chat_guid)
+        assert result == "Family"
+
+    def test_get_user_name_group_no_display_name(self, adapter):
+        """Test getting user name for group without display name."""
+        data = {
+            "handle": {"address": "+15551234567"},
+            "chats": [{"guid": "iMessage;+;chat123"}],
+        }
+        chat_guid = "iMessage;+;chat123"
+        result = adapter._get_user_name(data, chat_guid)
+        assert result == "+15551234567"
+
+    def test_should_ignore_message_from_me(self, adapter):
+        """Test that own messages are ignored."""
+        data = {"isFromMe": True, "handle": {"address": "+15551234567"}}
+        assert adapter._should_ignore_message(data) is True
+
+    def test_should_ignore_message_from_allowed(self, adapter):
+        """Test that allowed sender messages are not ignored."""
+        data = {"isFromMe": False, "handle": {"address": "+15551234567"}}
+        assert adapter._should_ignore_message(data) is False
+
+    def test_should_ignore_message_from_blocked(self):
+        """Test that blocked sender messages are ignored."""
+        config = BlueBubblesConfig(
+            server_url="http://localhost:1234",
+            password="test",
+            allowed_senders=["+15551111111"],
+        )
+        adapter = IMessageAdapter(config)
+        data = {"isFromMe": False, "handle": {"address": "+15559999999"}}
+        assert adapter._should_ignore_message(data) is True
+
+    def test_verify_webhook_password_valid(self, adapter):
+        """Test valid webhook password verification."""
+        from aiohttp.test_utils import make_mocked_request
+
+        request = make_mocked_request("POST", "/webhook?password=test-password")
+        assert adapter._verify_webhook_password(request) is True
+
+    def test_verify_webhook_password_invalid(self, adapter):
+        """Test invalid webhook password verification."""
+        from aiohttp.test_utils import make_mocked_request
+
+        request = make_mocked_request("POST", "/webhook?password=wrong")
+        assert adapter._verify_webhook_password(request) is False
+
+    def test_verify_webhook_password_guid_alias(self, adapter):
+        """Test webhook password verification with guid alias."""
+        from aiohttp.test_utils import make_mocked_request
+
+        request = make_mocked_request("POST", "/webhook?guid=test-password")
+        assert adapter._verify_webhook_password(request) is True
+
+    def test_create_webhook_app(self, adapter):
+        """Test webhook app creation."""
+        from aiohttp import web
+
+        app = adapter._create_webhook_app()
+        assert isinstance(app, web.Application)
+        # Verify route was added
+        routes = list(app.router.routes())
+        assert len(routes) > 0
+
+
+class TestIMessageAdapterParsing:
+    """Tests for IMessageAdapter webhook parsing methods."""
+
+    @pytest.fixture
+    def adapter(self):
+        """Create adapter with valid config."""
+        config = BlueBubblesConfig(
+            server_url="http://192.168.1.100:1234",
+            password="test-password",
+        )
+        return IMessageAdapter(config)
+
+    @pytest.mark.asyncio
+    async def test_parse_webhook_payload_success(self, adapter):
+        """Test successful webhook payload parsing."""
+        from unittest.mock import AsyncMock
+
+        from aiohttp.test_utils import make_mocked_request
+
+        request = make_mocked_request("POST", "/webhook")
+        payload = b'{"type": "new-message", "data": {"text": "hi"}}'
+        request._read_bytes = AsyncMock(return_value=payload)
+
+        # Mock the json method
+        async def mock_json():
+            return {"type": "new-message", "data": {"text": "hi"}}
+
+        request.json = mock_json
+
+        event = await adapter._parse_webhook_payload(request)
+        assert event is not None
+        assert event.event_type == "new-message"
+        assert event.data == {"text": "hi"}
+
+    @pytest.mark.asyncio
+    async def test_parse_webhook_payload_invalid_json(self, adapter):
+        """Test webhook payload parsing with invalid JSON."""
+        from aiohttp.test_utils import make_mocked_request
+
+        request = make_mocked_request("POST", "/webhook")
+
+        async def mock_json():
+            raise ValueError("Invalid JSON")
+
+        request.json = mock_json
+
+        event = await adapter._parse_webhook_payload(request)
+        assert event is None
+
+    @pytest.mark.asyncio
+    async def test_send_response(self, adapter):
+        """Test sending response creates correct outgoing message."""
+        from openpaws.channels.base import IncomingMessage
+
+        incoming = IncomingMessage(
+            channel_type="imessage",
+            channel_id="iMessage;-;+15551234567",
+            user_id="+15551234567",
+            user_name="+15551234567",
+            text="Hello",
+            thread_id="msg-123",
+        )
+
+        # Mock send_message
+        adapter._running = True
+        send_calls = []
+
+        async def mock_send(msg):
+            send_calls.append(msg)
+
+        adapter.send_message = mock_send
+
+        await adapter._send_response(incoming, "Response text")
+
+        assert len(send_calls) == 1
+        assert send_calls[0].channel_id == "iMessage;-;+15551234567"
+        assert send_calls[0].text == "Response text"
+        assert send_calls[0].thread_id == "msg-123"
+
+
 class TestIMessageAdapterLifecycle:
     """Tests for IMessageAdapter start/stop lifecycle."""
 
