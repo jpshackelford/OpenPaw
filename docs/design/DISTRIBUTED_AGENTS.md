@@ -629,7 +629,7 @@ agent:
     
   # Workspace configuration
   workspace:
-    type: local  # or "docker"
+    type: local  # or "docker" - see Sandbox Types below
     base_dir: /var/openpaws/workspace
     cleanup_on_complete: true
     
@@ -642,6 +642,111 @@ agent:
       image: ghcr.io/openhands/agent-server:latest-python
       mount_docker_socket: false
 ```
+
+### Sandbox Types: Local vs Docker
+
+A critical configuration choice for remote agents:
+
+**Local Sandbox (`workspace.type: local`)**
+
+The agent-server runs directly on the host OS with full access to system resources.
+
+```yaml
+workspace:
+  type: local
+  base_dir: /var/openpaws/workspace
+```
+
+**Use when:**
+- ✅ macOS agents for iOS development (needs Xcode, Simulator, Keychain)
+- ✅ Windows agents for .NET (needs Visual Studio, Windows SDK)
+- ✅ GPU access required (CUDA drivers on host)
+- ✅ Hardware access needed (USB devices, network equipment)
+- ✅ Native toolchains that don't work in containers
+- ✅ Access to system keychains/credential stores
+
+**Trade-offs:**
+- ⚠️ Less isolation between tasks
+- ⚠️ Agent can modify host system
+- ⚠️ Must trust the tasks being executed
+
+**Docker Sandbox (`workspace.type: docker`)**
+
+The agent-server runs inside a Docker container, isolated from the host.
+
+```yaml
+workspace:
+  type: docker
+  docker:
+    image: ghcr.io/openhands/agent-server:latest-python
+    # Mount specific directories if needed
+    mounts:
+      - /data/models:/models:ro    # Read-only model access
+    # Resource limits
+    memory_limit: 8g
+    cpu_limit: 4
+```
+
+**Use when:**
+- ✅ Running untrusted or experimental code
+- ✅ Need reproducible environments
+- ✅ Linux-based toolchains (Python, Node, Go, etc.)
+- ✅ Want strong isolation between tasks
+- ✅ Multi-tenant agent pools
+
+**Trade-offs:**
+- ❌ No access to host GUI (macOS Simulator, etc.)
+- ❌ No native Keychain/credential store access
+- ❌ GPU passthrough requires extra configuration
+- ❌ Some performance overhead
+
+### macOS-Specific Considerations
+
+For macOS agents doing iOS/Swift development:
+
+```yaml
+agent:
+  name: mac-mini-ios-builder
+  
+  capabilities:
+    os: macos
+    arch: arm64
+    tags:
+      - ios
+      - swift
+      - xcode-15
+      - simulator
+      - codesign
+  
+  workspace:
+    type: local  # MUST be local for iOS development
+    base_dir: ~/Library/OpenPaws/workspaces
+    
+  # Security: restrict what the agent can do
+  security:
+    # Only allow access to specific directories
+    allowed_paths:
+      - ~/Developer
+      - ~/Library/Developer
+      - /Applications/Xcode.app
+    # Prevent dangerous operations
+    deny_commands:
+      - rm -rf /
+      - sudo
+```
+
+**Why local is required for iOS:**
+
+| Resource | Local | Docker |
+|----------|-------|--------|
+| Xcode CLI tools | ✅ | ✅ (limited) |
+| iOS Simulator | ✅ | ❌ |
+| Code signing | ✅ | ❌ |
+| Keychain Access | ✅ | ❌ |
+| Device deployment | ✅ | ❌ |
+| SwiftUI Previews | ✅ | ❌ |
+
+The agent advertises capabilities like `simulator` and `codesign` only if running in local mode with proper access.
 
 ---
 
