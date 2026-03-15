@@ -119,41 +119,82 @@ agent:
 ### Implementation in Remote Agent
 
 ```python
-class RemoteAgent:
+class RemoteAgentExecutor:
     """Runs on the remote machine, manages task execution."""
+    
+    def __init__(self, config: AgentConfig):
+        self.config = config
+        self.agent_server_port = config.sandbox.port
+        
+        # Workspace manager handles directory allocation/cleanup
+        # This is OUR responsibility, not the SDK's
+        self.workspace_manager = LocalSandboxManager(
+            base_dir=Path(config.workspace.base_dir),
+            cleanup_policy=config.workspace.cleanup_policy,
+        )
+        
+        # Start background cleanup task
+        self._start_cleanup_scheduler()
     
     async def execute_task(self, task: TaskAssignment) -> TaskResult:
         # 1. Create task-specific workspace directory
-        workspace_dir = self._create_task_workspace(task.task_id)
+        #    For local sandbox, WE manage this (not SDK)
+        workspace_dir = self.workspace_manager.create_task_workspace(task.task_id)
         
-        # 2. Create fresh RemoteWorkspace pointing to agent-server
+        # 2. Create RemoteWorkspace pointing to our local agent-server
+        #    The working_dir tells agent-server where to execute commands
         workspace = RemoteWorkspace(
             host=f"http://localhost:{self.agent_server_port}",
             working_dir=str(workspace_dir),
         )
         
         # 3. Create fresh Conversation (clean context!)
+        #    Each task gets independent message history
         conversation = Conversation(
             agent=self.agent,
             workspace=workspace,
-            secrets=task.secrets,  # Task-specific secrets
-            delete_on_close=True,
+            secrets=task.secrets,  # Task-specific secrets only
+            delete_on_close=True,  # Clean up tmux sessions etc.
         )
         
+        success = False
         try:
             # 4. Run the task
             conversation.send_message(task.prompt)
             conversation.run()
             
             # 5. Extract result
+            success = True
             return TaskResult(success=True, ...)
+            
+        except Exception as e:
+            return TaskResult(success=False, error=str(e))
+            
         finally:
-            # 6. Clean up conversation
+            # 6. Clean up conversation (SDK handles tmux, etc.)
             conversation.close()
             
-            # 7. Clean up workspace (based on policy)
-            self._cleanup_workspace(workspace_dir, task.cleanup_policy)
+            # 7. Clean up workspace directory (WE handle this)
+            self.workspace_manager.cleanup_workspace(workspace_dir, success)
+    
+    def _start_cleanup_scheduler(self):
+        """Run periodic cleanup of old workspaces."""
+        async def cleanup_loop():
+            while True:
+                await asyncio.sleep(3600)  # Every hour
+                self.workspace_manager.run_cleanup_sweep()
+        asyncio.create_task(cleanup_loop())
 ```
+
+**Key point:** In local sandbox mode, workspace directory management is the `openpaws-agent`'s responsibility:
+
+| Responsibility | Local Sandbox | Docker Sandbox |
+|---------------|---------------|----------------|
+| Create workspace dir | `openpaws-agent` | Container provides |
+| Set `working_dir` | `openpaws-agent` | Container provides |
+| File isolation | `openpaws-agent` (soft) | Container (hard) |
+| Cleanup workspace | `openpaws-agent` | Container removed |
+| Process isolation | None | Container provides |
 
 ### Key SDK Behaviors We Rely On
 
@@ -669,6 +710,50 @@ workspace:
 - ⚠️ Less isolation between tasks
 - ⚠️ Agent can modify host system
 - ⚠️ Must trust the tasks being executed
+
+**Important: Workspace Management Required**
+
+Unlike Docker sandbox (where the container provides isolation), local sandbox requires `openpaws-agent` to handle workspace allocation and cleanup:
+
+```python
+class LocalSandboxManager:
+    """Manages workspace directories for local sandbox mode."""
+    
+    def __init__(self, base_dir: Path, cleanup_policy: CleanupPolicy):
+        self.base_dir = base_dir
+        self.cleanup_policy = cleanup_policy
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+    
+    def create_task_workspace(self, task_id: str) -> Path:
+        """Create isolated workspace directory for a task."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        workspace_dir = self.base_dir / f"task_{task_id}_{timestamp}"
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+        return workspace_dir
+    
+    def cleanup_workspace(self, workspace_dir: Path, task_succeeded: bool):
+        """Clean up workspace based on policy."""
+        if task_succeeded and self.cleanup_policy.on_success == "immediate":
+            shutil.rmtree(workspace_dir, ignore_errors=True)
+        elif not task_succeeded and self.cleanup_policy.on_failure == "retain":
+            # Keep for debugging, will be cleaned by age policy
+            pass
+        # Age-based cleanup handled by background task
+    
+    def run_cleanup_sweep(self):
+        """Background task: clean old workspaces."""
+        cutoff = datetime.now() - self.cleanup_policy.max_age
+        for workspace in self.base_dir.iterdir():
+            if workspace.is_dir() and workspace.stat().st_mtime < cutoff.timestamp():
+                shutil.rmtree(workspace, ignore_errors=True)
+```
+
+The `openpaws-agent` daemon must:
+1. Create unique workspace directory per task
+2. Pass `working_dir` to the `RemoteWorkspace` when creating conversation
+3. Track workspace → task mapping for cleanup
+4. Run periodic cleanup sweeps for age-based retention
+5. Respect disk space limits (delete oldest first when full)
 
 **Docker Sandbox (`workspace.type: docker`)**
 
