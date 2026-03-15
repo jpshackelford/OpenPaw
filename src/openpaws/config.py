@@ -9,7 +9,7 @@ import yaml
 
 @dataclass
 class ChannelConfig:
-    """Configuration for a channel (Telegram, Slack, Gmail, etc.)."""
+    """Configuration for a channel (Telegram, Slack, Gmail, iMessage, etc.)."""
 
     type: str
     # Slack/Telegram tokens
@@ -21,6 +21,14 @@ class ChannelConfig:
     mode: str | None = None  # "channel" or "tool" for Gmail
     poll_interval: int = 60  # seconds, for Gmail polling
     filter_label: str | None = None  # Gmail label filter
+    # iMessage/BlueBubbles-specific settings
+    server_url: str | None = None  # BlueBubbles server URL
+    password: str | None = None  # BlueBubbles API password
+    webhook_port: int = 8080  # Local webhook port
+    webhook_path: str = "/webhook"  # Webhook endpoint path
+    allowed_senders: list[str] | None = None  # Allowlist for senders
+    send_read_receipts: bool = True  # Send read receipts
+    send_typing_indicators: bool = True  # Send typing indicators
 
 
 @dataclass
