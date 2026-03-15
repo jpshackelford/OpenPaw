@@ -30,6 +30,7 @@ from openpaws.channels.base import ChannelAdapter, IncomingMessage
 from openpaws.channels.slack import SlackAdapter, SlackConfig
 from openpaws.config import Config, load_config
 from openpaws.scheduler import Scheduler
+from openpaws.storage import Storage
 
 logger = logging.getLogger(__name__)
 
@@ -310,6 +311,7 @@ class Daemon:
         self.config_path = Path(config_path) if config_path else None
         self.config: Config | None = None
         self.scheduler: Scheduler | None = None
+        self.storage: Storage | None = None
         self.state: DaemonState | None = None
         self._shutdown_event: asyncio.Event | None = None
         self._channel_adapters: list[ChannelAdapter] = []
@@ -333,16 +335,6 @@ class Daemon:
         # For now, just log and return
         return f"Task '{task.config.name}' executed at {datetime.now()}"
 
-    async def _handle_message(self, message: IncomingMessage) -> str | None:
-        """Handle incoming messages from channel adapters."""
-        logger.info(
-            f"Message from {message.channel_type}:{message.channel_id} "
-            f"user={message.user_id}: {message.text[:50]}..."
-        )
-        # TODO: Integrate with software-agent-sdk conversation
-        # For now, just acknowledge
-        return f"Received: {message.text[:100]}"
-
     def _load_config(self) -> None:
         """Load configuration from file."""
         try:
@@ -352,12 +344,27 @@ class Daemon:
             logger.warning(f"Config file not found: {e}. Running with defaults.")
             self.config = Config()
 
+    def _setup_storage(self) -> None:
+        """Initialize SQLite storage for state persistence."""
+        self.storage = Storage()
+        logger.info(f"Storage initialized: {self.storage.db_path}")
+
     def _setup_scheduler(self) -> None:
         """Initialize scheduler with configured tasks."""
-        self.scheduler = Scheduler()
+        self.scheduler = Scheduler(storage=self.storage)
         for task_config in self.config.tasks.values():
             self.scheduler.add_task(task_config)
             logger.info(f"Scheduled task: {task_config.name}")
+
+    async def _handle_message(self, message: IncomingMessage) -> str | None:
+        """Handle incoming messages from channel adapters."""
+        logger.info(
+            f"Message from {message.channel_type}:{message.channel_id} "
+            f"user={message.user_id}: {message.text[:50]}..."
+        )
+        # TODO: Integrate with software-agent-sdk conversation
+        # For now, just acknowledge
+        return f"Received: {message.text[:100]}"
 
     def _create_slack_adapter(self, channel_config) -> SlackAdapter | None:
         """Create a Slack adapter from channel config."""
@@ -428,6 +435,7 @@ class Daemon:
             started_at=datetime.now(), config_path=self.config_path
         )
         self._load_config()
+        self._setup_storage()
         self._setup_scheduler()
         self._setup_channel_adapters()
 

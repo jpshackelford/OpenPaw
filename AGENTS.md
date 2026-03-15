@@ -66,8 +66,9 @@ src/openpaws/
 ├── cli.py           # Click CLI commands (start, stop, status, tasks)
 ├── config.py        # YAML config parsing with env var expansion
 ├── daemon.py        # Daemon process management (PID file, signals, logging)
-├── runner.py        # Conversation runner for executing tasks
-├── scheduler.py     # Cron-based task scheduling
+├── runner.py        # Conversation runner (integrates with software-agent-sdk)
+├── scheduler.py     # Cron-based task scheduling (with storage integration)
+├── storage.py       # SQLite state persistence for tasks and sessions
 └── channels/        # Chat platform adapters
     ├── __init__.py
     ├── base.py      # Abstract ChannelAdapter interface
@@ -80,7 +81,8 @@ tests/
 ├── test_daemon_integration.py  # Integration tests (real process start/stop)
 ├── test_runner.py           # Conversation runner tests
 ├── test_scheduler.py        # Scheduler unit tests
-└── test_slack_adapter.py    # Slack adapter tests
+├── test_slack_adapter.py    # Slack adapter tests
+└── test_storage.py          # SQLite storage tests
 ```
 
 ## Development Commands
