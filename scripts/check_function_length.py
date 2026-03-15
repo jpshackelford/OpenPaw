@@ -21,6 +21,7 @@ Usage:
 
 import argparse
 import ast
+import json
 import re
 import sys
 from pathlib import Path
@@ -172,6 +173,10 @@ def main():
         "--no-color", action="store_true",
         help="Disable colored output"
     )
+    parser.add_argument(
+        "--json", action="store_true",
+        help="Output results as JSON"
+    )
     args = parser.parse_args()
 
     if args.no_color:
@@ -207,6 +212,31 @@ def main():
     # Separate exempted functions
     exempted = [f for f in functions if f[4]]
     non_exempted = [f for f in functions if not f[4]]
+
+    # JSON output mode
+    if args.json:
+        errors = [f for f in non_exempted if f[2] > args.error]
+        warnings = [f for f in non_exempted if args.warn < f[2] <= args.error]
+        result = {
+            "violations": [
+                {
+                    "file": str(fp),
+                    "function": name,
+                    "lines": length,
+                    "line": start,
+                    "severity": "error" if length > args.error else "warning",
+                }
+                for fp, name, length, start, _ in errors + warnings
+            ],
+            "summary": {
+                "total": len(non_exempted),
+                "errors": len(errors),
+                "warnings": len(warnings),
+                "exempted": len(exempted),
+            },
+        }
+        print(json.dumps(result, indent=2))
+        sys.exit(1 if errors else 0)
 
     if args.all:
         print(f"\n{BOLD}All functions sorted by length:{RESET}")
