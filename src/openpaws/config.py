@@ -10,7 +10,7 @@ import yaml
 @dataclass
 class ChannelConfig:
     """Configuration for a channel (Telegram, Slack, Gmail, etc.)."""
-    
+
     type: str
     # Slack/Telegram tokens
     bot_token: str | None = None
@@ -26,7 +26,7 @@ class ChannelConfig:
 @dataclass
 class GroupConfig:
     """Configuration for a group/conversation."""
-    
+
     name: str
     channel: str
     chat_id: str
@@ -38,13 +38,13 @@ class GroupConfig:
 @dataclass
 class TaskConfig:
     """Configuration for a scheduled task.
-    
+
     Tasks can be scheduled in three ways (mutually exclusive):
     - schedule: Cron expression (e.g., "0 9 * * *")
     - interval: Run every N seconds (e.g., 3600 for every hour)
     - once: Run at a specific timestamp (ISO format or "YYYY-MM-DD HH:MM")
     """
-    
+
     name: str
     group: str
     prompt: str
@@ -53,7 +53,7 @@ class TaskConfig:
     once: str | None = None  # ISO timestamp for one-time execution
 
 
-@dataclass 
+@dataclass
 class AgentConfig:
     """Configuration for the agent."""
 
@@ -67,7 +67,7 @@ class AgentConfig:
 @dataclass
 class Config:
     """Root configuration."""
-    
+
     channels: dict[str, ChannelConfig] = field(default_factory=dict)
     groups: dict[str, GroupConfig] = field(default_factory=dict)
     tasks: dict[str, TaskConfig] = field(default_factory=dict)
@@ -78,14 +78,15 @@ def expand_env_vars(value: str) -> str:
     """Expand ${VAR} patterns in strings."""
     if not isinstance(value, str):
         return value
-    
+
     import re
-    pattern = r'\$\{([^}]+)\}'
-    
+
+    pattern = r"\$\{([^}]+)\}"
+
     def replacer(match):
         var_name = match.group(1)
         return os.environ.get(var_name, match.group(0))
-    
+
     return re.sub(pattern, replacer, value)
 
 
@@ -137,7 +138,7 @@ def _validate_task_schedule(name: str, cfg: dict) -> None:
     """Validate that a task has exactly one schedule type."""
     schedule_types = ["schedule", "interval", "once"]
     present = [t for t in schedule_types if t in cfg and cfg[t] is not None]
-    
+
     if len(present) == 0:
         raise ValueError(f"Task '{name}' must have one of: schedule, interval, or once")
     if len(present) > 1:
@@ -149,11 +150,11 @@ def _parse_tasks(raw: dict) -> dict[str, TaskConfig]:
     tasks = {}
     for name, cfg in raw.get("tasks", {}).items():
         _validate_task_schedule(name, cfg)
-        
+
         # Parse interval if present
         if "interval" in cfg and cfg["interval"] is not None:
             cfg["interval"] = _parse_interval(cfg["interval"])
-        
+
         tasks[name] = TaskConfig(name=name, **cfg)
     return tasks
 

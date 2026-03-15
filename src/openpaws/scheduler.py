@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 def _parse_once_timestamp(once_str: str) -> datetime:
     """Parse a once timestamp string to datetime.
-    
+
     Supports ISO format (YYYY-MM-DDTHH:MM:SS) and simple format (YYYY-MM-DD HH:MM).
     """
     formats = [

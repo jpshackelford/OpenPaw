@@ -140,8 +140,10 @@ class ConversationRunner:
 
     def _make_event_collector(self, events: list[Event]):
         """Create a callback that appends events to a list."""
+
         def callback(event: Event) -> None:
             events.append(event)
+
         return callback
 
     def _build_callbacks(self, events: list[Event], extra: list | None) -> list:

@@ -1,0 +1,41 @@
+{
+  "exempt": {
+    "src/openpaws/__init__.py": "version-only module with conditional imports"
+  },
+  "files": {
+    "src/openpaws/__main__.py": {
+      "min_coverage": 100.0
+    },
+    "src/openpaws/channels/__init__.py": {
+      "min_coverage": 100.0
+    },
+    "src/openpaws/channels/base.py": {
+      "min_coverage": 86.5
+    },
+    "src/openpaws/channels/gmail.py": {
+      "min_coverage": 63.7
+    },
+    "src/openpaws/channels/slack.py": {
+      "min_coverage": 84.3
+    },
+    "src/openpaws/cli.py": {
+      "min_coverage": 84.8
+    },
+    "src/openpaws/config.py": {
+      "min_coverage": 94.1
+    },
+    "src/openpaws/daemon.py": {
+      "min_coverage": 75.7
+    },
+    "src/openpaws/runner.py": {
+      "min_coverage": 62.4
+    },
+    "src/openpaws/scheduler.py": {
+      "min_coverage": 92.3
+    },
+    "src/openpaws/storage.py": {
+      "min_coverage": 98.3
+    }
+  },
+  "new_file_threshold": 80.0
+}

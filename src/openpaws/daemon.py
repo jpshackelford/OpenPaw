@@ -238,9 +238,9 @@ def get_daemon_status() -> dict:
 
 _TIME_UNITS = [
     (86400, "d"),  # days
-    (3600, "h"),   # hours
-    (60, "m"),     # minutes
-    (1, "s"),      # seconds
+    (3600, "h"),  # hours
+    (60, "m"),  # minutes
+    (1, "s"),  # seconds
 ]
 
 
@@ -373,9 +373,7 @@ class Daemon:
         bot_token = channel_config.bot_token
 
         if not app_token or not bot_token:
-            logger.warning(
-                "Slack channel missing app_token or bot_token, skipping"
-            )
+            logger.warning("Slack channel missing app_token or bot_token, skipping")
             return None
 
         try:

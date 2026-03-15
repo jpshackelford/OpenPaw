@@ -378,9 +378,7 @@ class GmailAdapter(ChannelAdapter):
         self._service = None
         self._message_handler = None
 
-    def _build_mime_message(
-        self, message: OutgoingMessage, subject: str
-    ) -> MIMEText:
+    def _build_mime_message(self, message: OutgoingMessage, subject: str) -> MIMEText:
         """Build MIME message from OutgoingMessage."""
         mime_msg = MIMEText(message.text)
         mime_msg["to"] = message.channel_id
@@ -415,6 +413,7 @@ class GmailAdapter(ChannelAdapter):
     # Tool mode methods for agent use
     async def _search_message_ids(self, query: str, max_results: int) -> list[dict]:
         """Search for message IDs matching query."""
+
         def search():
             results = (
                 self._service.users()

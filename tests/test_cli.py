@@ -1,6 +1,5 @@
 """Tests for CLI commands."""
 
-
 import pytest
 from click.testing import CliRunner
 
@@ -80,12 +79,14 @@ class TestTasksList:
 
     def test_tasks_list_shows_stored_state(self, runner, config_file, storage_with_env):
         """Test tasks list shows stored task state."""
-        storage_with_env.save_task(TaskState(
-            name="morning-news",
-            schedule="0 8 * * *",
-            status="paused",
-        ))
-        
+        storage_with_env.save_task(
+            TaskState(
+                name="morning-news",
+                schedule="0 8 * * *",
+                status="paused",
+            )
+        )
+
         result = runner.invoke(main, ["tasks", "list"])
         assert result.exit_code == 0
         assert "paused" in result.output
@@ -105,19 +106,21 @@ class TestTasksPause:
         result = runner.invoke(main, ["tasks", "pause", "morning-news"])
         assert result.exit_code == 0
         assert "paused" in result.output
-        
+
         task = storage_with_env.load_task("morning-news")
         assert task is not None
         assert task.status == "paused"
 
     def test_pause_already_paused(self, runner, config_file, storage_with_env):
         """Test pausing a task that's already paused."""
-        storage_with_env.save_task(TaskState(
-            name="morning-news",
-            schedule="0 8 * * *",
-            status="paused",
-        ))
-        
+        storage_with_env.save_task(
+            TaskState(
+                name="morning-news",
+                schedule="0 8 * * *",
+                status="paused",
+            )
+        )
+
         result = runner.invoke(main, ["tasks", "pause", "morning-news"])
         assert result.exit_code == 0
         assert "already paused" in result.output
@@ -140,16 +143,18 @@ class TestTasksResume:
 
     def test_resume_paused_task(self, runner, config_file, storage_with_env):
         """Test resuming a paused task."""
-        storage_with_env.save_task(TaskState(
-            name="morning-news",
-            schedule="0 8 * * *",
-            status="paused",
-        ))
-        
+        storage_with_env.save_task(
+            TaskState(
+                name="morning-news",
+                schedule="0 8 * * *",
+                status="paused",
+            )
+        )
+
         result = runner.invoke(main, ["tasks", "resume", "morning-news"])
         assert result.exit_code == 0
         assert "resumed" in result.output
-        
+
         task = storage_with_env.load_task("morning-news")
         assert task is not None
         assert task.status == "active"
@@ -181,7 +186,7 @@ class TestLogs:
         log_dir.mkdir()
         log_file = log_dir / "openpaws.log"
         log_file.write_text("")
-        
+
         result = runner.invoke(main, ["logs"])
         assert result.exit_code == 0
         assert "empty" in result.output
@@ -192,7 +197,7 @@ class TestLogs:
         log_dir.mkdir()
         log_file = log_dir / "openpaws.log"
         log_file.write_text("2024-03-15 10:00:00 - INFO - Test log message\n")
-        
+
         result = runner.invoke(main, ["logs"])
         assert result.exit_code == 0
         assert "Test log message" in result.output
@@ -206,7 +211,7 @@ class TestLogs:
             "2024-03-15 10:00:00 - INFO - Task morning-news started\n"
             "2024-03-15 10:00:01 - INFO - Task hourly-check completed\n"
         )
-        
+
         result = runner.invoke(main, ["logs", "--task", "morning"])
         assert result.exit_code == 0
         assert "morning-news" in result.output
@@ -219,7 +224,7 @@ class TestLogs:
         log_file = log_dir / "openpaws.log"
         lines = [f"Line {i}\n" for i in range(100)]
         log_file.write_text("".join(lines))
-        
+
         result = runner.invoke(main, ["logs", "--lines", "10"])
         assert result.exit_code == 0
         assert "Line 99" in result.output
@@ -231,37 +236,58 @@ class TestTasksAdd:
 
     def test_add_requires_schedule(self, runner, isolated_env):
         """Test that add requires a schedule option."""
-        result = runner.invoke(main, [
-            "tasks", "add",
-            "-g", "main",
-            "-p", "Test prompt",
-            "test-task",
-        ])
+        result = runner.invoke(
+            main,
+            [
+                "tasks",
+                "add",
+                "-g",
+                "main",
+                "-p",
+                "Test prompt",
+                "test-task",
+            ],
+        )
         assert result.exit_code == 1
         assert "Must specify one of" in result.output
 
     def test_add_multiple_schedules(self, runner, isolated_env):
         """Test that add rejects multiple schedule types."""
-        result = runner.invoke(main, [
-            "tasks", "add",
-            "--schedule", "0 8 * * *",
-            "--every", "1h",
-            "-g", "main",
-            "-p", "Test prompt",
-            "test-task",
-        ])
+        result = runner.invoke(
+            main,
+            [
+                "tasks",
+                "add",
+                "--schedule",
+                "0 8 * * *",
+                "--every",
+                "1h",
+                "-g",
+                "main",
+                "-p",
+                "Test prompt",
+                "test-task",
+            ],
+        )
         assert result.exit_code == 1
         assert "Specify only one" in result.output
 
     def test_add_with_schedule(self, runner, isolated_env):
         """Test add with cron schedule (stub behavior)."""
-        result = runner.invoke(main, [
-            "tasks", "add",
-            "--schedule", "0 8 * * *",
-            "-g", "main",
-            "-p", "Test prompt",
-            "test-task",
-        ])
+        result = runner.invoke(
+            main,
+            [
+                "tasks",
+                "add",
+                "--schedule",
+                "0 8 * * *",
+                "-g",
+                "main",
+                "-p",
+                "Test prompt",
+                "test-task",
+            ],
+        )
         assert result.exit_code == 0
         assert "Adding task" in result.output
         # Currently still shows not implemented

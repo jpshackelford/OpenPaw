@@ -32,6 +32,7 @@ def _get_openpaws_dir() -> Path:
     openpaws_dir.mkdir(parents=True, exist_ok=True)
     return openpaws_dir
 
+
 # SQL schema
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
@@ -168,9 +169,7 @@ class Storage:
     def load_task(self, name: str) -> TaskState | None:
         """Load a task state by name."""
         with self._connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM tasks WHERE name = ?", (name,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM tasks WHERE name = ?", (name,)).fetchone()
             if row is None:
                 return None
             return self._row_to_task(row)

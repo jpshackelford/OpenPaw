@@ -72,33 +72,33 @@ class TestConversationRunner:
     def test_get_api_key_anthropic(self, sample_config, temp_base_dir):
         """Test API key detection for Anthropic models."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
-        
+
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             key = runner._get_api_key_for_model("anthropic/claude-sonnet-4-20250514")
             assert key == "test-key"
-            
+
             key = runner._get_api_key_for_model("claude-3-opus")
             assert key == "test-key"
 
     def test_get_api_key_openai(self, sample_config, temp_base_dir):
         """Test API key detection for OpenAI models."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
-        
+
         with patch.dict(os.environ, {"OPENAI_API_KEY": "openai-key"}):
             key = runner._get_api_key_for_model("openai/gpt-4")
             assert key == "openai-key"
-            
+
             key = runner._get_api_key_for_model("gpt-4-turbo")
             assert key == "openai-key"
 
     def test_get_api_key_google(self, sample_config, temp_base_dir):
         """Test API key detection for Google models."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
-        
+
         with patch.dict(os.environ, {"GOOGLE_API_KEY": "google-key"}):
             key = runner._get_api_key_for_model("gemini/gemini-pro")
             assert key == "google-key"
-            
+
         with patch.dict(os.environ, {"GEMINI_API_KEY": "gemini-key"}, clear=True):
             key = runner._get_api_key_for_model("google/gemini-pro")
             assert key == "gemini-key"
@@ -106,7 +106,7 @@ class TestConversationRunner:
     def test_get_api_key_fallback(self, sample_config, temp_base_dir):
         """Test fallback API key."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
-        
+
         with patch.dict(os.environ, {"LLM_API_KEY": "fallback-key"}, clear=True):
             key = runner._get_api_key_for_model("some-other-model")
             assert key == "fallback-key"
@@ -115,9 +115,9 @@ class TestConversationRunner:
         """Test workspace directory creation."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
         group = sample_config.groups["main"]
-        
+
         workspace = runner._get_group_workspace(group)
-        
+
         assert workspace == temp_base_dir / "groups" / "main" / "workspace"
         assert workspace.exists()
 
@@ -125,19 +125,19 @@ class TestConversationRunner:
         """Test persistence directory creation."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
         group = sample_config.groups["main"]
-        
+
         persistence_dir = runner._get_group_persistence_dir(group)
-        
+
         assert persistence_dir == temp_base_dir / "groups" / "main" / "sessions"
         assert persistence_dir.exists()
 
     def test_create_llm_basic(self, sample_config, temp_base_dir):
         """Test LLM creation with basic config."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
-        
+
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             llm = runner._create_llm()
-            
+
             assert llm.model == "anthropic/claude-sonnet-4-20250514"
             assert llm.temperature == 0.7
 
@@ -150,10 +150,10 @@ class TestConversationRunner:
             ),
         )
         runner = ConversationRunner(config, base_dir=temp_base_dir)
-        
+
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             llm = runner._create_llm()
-            
+
             assert llm.base_url == "http://localhost:4000"
 
 
@@ -189,9 +189,9 @@ class TestRunPrompt:
     async def test_unknown_group(self, sample_config, temp_base_dir):
         """Test running prompt with unknown group."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
-        
+
         result = await runner.run_prompt("nonexistent", "Hello")
-        
+
         assert result.success is False
         assert "not found" in result.message
         assert "nonexistent" in result.error
@@ -204,17 +204,17 @@ class TestRunTask:
     async def test_run_task_calls_run_prompt(self, sample_config, temp_base_dir):
         """Test that run_task delegates to run_prompt."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
-        
+
         task = ScheduledTask(config=sample_config.tasks["morning"])
-        
+
         # Mock run_prompt to verify it's called correctly
         with patch.object(runner, "run_prompt") as mock_run_prompt:
             mock_run_prompt.return_value = ConversationResult(
                 success=True, message="Done"
             )
-            
+
             await runner.run_task(task)
-            
+
             mock_run_prompt.assert_called_once_with(
                 group_name="main",
                 prompt="Good morning! What's the weather?",
@@ -228,14 +228,14 @@ class TestRunMessage:
     async def test_run_message_calls_run_prompt(self, sample_config, temp_base_dir):
         """Test that run_message delegates to run_prompt."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
-        
+
         with patch.object(runner, "run_prompt") as mock_run_prompt:
             mock_run_prompt.return_value = ConversationResult(
                 success=True, message="Response"
             )
-            
+
             await runner.run_message("main", "Hello there!")
-            
+
             mock_run_prompt.assert_called_once_with(
                 group_name="main",
                 prompt="Hello there!",

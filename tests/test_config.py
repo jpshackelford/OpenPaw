@@ -16,7 +16,7 @@ from openpaws.config import (
 def test_expand_env_vars():
     """Test environment variable expansion."""
     os.environ["TEST_VAR"] = "hello"
-    
+
     assert expand_env_vars("${TEST_VAR}") == "hello"
     assert expand_env_vars("prefix_${TEST_VAR}_suffix") == "prefix_hello_suffix"
     assert expand_env_vars("no vars here") == "no vars here"
@@ -46,24 +46,24 @@ tasks:
 agent:
   model: anthropic/claude-sonnet-4-20250514
 """
-    
+
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(config_content)
         f.flush()
-        
+
         config = load_config(f.name)
-        
+
         assert "telegram" in config.channels
         assert config.channels["telegram"].bot_token == "test-token"
-        
+
         assert "main" in config.groups
         assert config.groups["main"].admin is True
-        
+
         assert "test-task" in config.tasks
         assert config.tasks["test-task"].schedule == "0 9 * * *"
-        
+
         assert config.agent.model == "anthropic/claude-sonnet-4-20250514"
-    
+
     os.unlink(f.name)
 
 
@@ -137,12 +137,15 @@ class TestValidateTaskSchedule:
     def test_multiple_schedule_types(self):
         """Test error when multiple schedule types are provided."""
         with pytest.raises(ValueError) as exc_info:
-            _validate_task_schedule("test", {
-                "schedule": "0 9 * * *",
-                "interval": 3600,
-                "group": "main",
-                "prompt": "hi"
-            })
+            _validate_task_schedule(
+                "test",
+                {
+                    "schedule": "0 9 * * *",
+                    "interval": 3600,
+                    "group": "main",
+                    "prompt": "hi",
+                },
+            )
         assert "multiple schedule types" in str(exc_info.value)
 
 
@@ -170,14 +173,14 @@ tasks:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write(config_content)
             f.flush()
-            
+
             config = load_config(f.name)
-            
+
             assert "heartbeat" in config.tasks
             assert config.tasks["heartbeat"].interval == 3600
             assert config.tasks["heartbeat"].schedule is None
             assert config.tasks["heartbeat"].once is None
-        
+
         os.unlink(f.name)
 
     def test_load_interval_task_with_unit(self):
@@ -201,11 +204,11 @@ tasks:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write(config_content)
             f.flush()
-            
+
             config = load_config(f.name)
-            
+
             assert config.tasks["heartbeat"].interval == 3600
-        
+
         os.unlink(f.name)
 
     def test_load_once_task(self):
@@ -229,14 +232,14 @@ tasks:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write(config_content)
             f.flush()
-            
+
             config = load_config(f.name)
-            
+
             assert "reminder" in config.tasks
             assert config.tasks["reminder"].once == "2024-03-15T09:00:00"
             assert config.tasks["reminder"].schedule is None
             assert config.tasks["reminder"].interval is None
-        
+
         os.unlink(f.name)
 
     def test_load_mixed_task_types(self):
@@ -270,11 +273,11 @@ tasks:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write(config_content)
             f.flush()
-            
+
             config = load_config(f.name)
-            
+
             assert config.tasks["daily"].schedule == "0 9 * * *"
             assert config.tasks["heartbeat"].interval == 1800  # 30 minutes
             assert config.tasks["reminder"].once == "2024-03-15 09:00"
-        
+
         os.unlink(f.name)

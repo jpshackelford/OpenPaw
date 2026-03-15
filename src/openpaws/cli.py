@@ -124,13 +124,13 @@ def _get_merged_tasks() -> list[TaskState]:
     storage = Storage()
     stored_tasks = {t.name: t for t in storage.load_all_tasks()}
     result = []
-    
+
     for name, task_cfg in config.tasks.items():
         if name in stored_tasks:
             result.append(stored_tasks.pop(name))
         else:
             result.append(_task_config_to_state(task_cfg))
-    
+
     result.extend(stored_tasks.values())
     return result
 
@@ -147,16 +147,16 @@ def _print_task_row(task: TaskState) -> None:
 def tasks_list():
     """List all scheduled tasks."""
     all_tasks = _get_merged_tasks()
-    
+
     if not all_tasks:
         click.echo("📋 No scheduled tasks found")
         return
-    
+
     click.echo("📋 Scheduled Tasks")
     click.echo("─" * 65)
     click.echo(f"{'NAME':<20} {'SCHEDULE':<16} {'STATUS':<10} {'NEXT RUN':<16}")
     click.echo("─" * 65)
-    
+
     for task in sorted(all_tasks, key=lambda t: t.name):
         _print_task_row(task)
 
@@ -219,10 +219,10 @@ def _get_schedule_string(task_cfg: TaskConfig) -> str:
 def _run_task_sync(config: Config, task: ScheduledTask) -> None:
     """Run a task synchronously."""
     from openpaws.runner import ConversationRunner
-    
+
     runner = ConversationRunner(config)
     result = asyncio.run(runner.run_task(task))
-    
+
     if result.success:
         click.echo("✅ Task completed")
         click.echo(f"📝 Response: {result.message}")
@@ -239,7 +239,7 @@ def tasks_run(name):
     if task_cfg is None:
         click.echo(f"❌ Task '{name}' not found")
         sys.exit(1)
-    
+
     click.echo(f"🚀 Running task '{name}'...")
     config = _get_config_or_empty()
     task = ScheduledTask(config=task_cfg)
@@ -270,14 +270,14 @@ def tasks_pause(name):
     if task_cfg is None:
         click.echo(f"❌ Task '{name}' not found")
         sys.exit(1)
-    
+
     storage = Storage()
     stored = storage.load_task(name)
-    
+
     if stored and stored.status == "paused":
         click.echo(f"⏸️  Task '{name}' is already paused")
         return
-    
+
     storage.save_task(_create_paused_task_state(task_cfg, stored))
     click.echo(f"⏸️  Task '{name}' paused")
 
@@ -321,12 +321,12 @@ def tasks_resume(name):
     if task_cfg is None:
         click.echo(f"❌ Task '{name}' not found")
         sys.exit(1)
-    
+
     stored = Storage().load_task(name)
     if stored is None or stored.status != "paused":
         click.echo(f"▶️  Task '{name}' is not paused")
         return
-    
+
     next_run = _save_resumed_task(task_cfg, stored)
     click.echo(f"▶️  Task '{name}' resumed, next run: {next_run}")
 
@@ -391,12 +391,12 @@ def _show_recent_logs(log_path: Path, lines: int, pattern: str | None) -> None:
     """Show recent log lines with optional filtering."""
     log_lines = _tail_log_file(log_path, lines)
     filtered = _filter_log_lines(log_lines, pattern)
-    
+
     if not filtered:
         msg = f"No log entries matching '{pattern}'" if pattern else "Log file is empty"
         click.echo(f"📄 {msg}")
         return
-    
+
     header = f"filter: {pattern}" if pattern else str(log_path)
     click.echo(f"📄 Recent logs ({header}):")
     click.echo("─" * 60)
@@ -423,7 +423,7 @@ def logs(group, task, lines, follow):
     log_path = get_log_file()
     if _handle_missing_log_file(log_path):
         return
-    
+
     filter_pattern = group or task
     if follow:
         if filter_pattern:

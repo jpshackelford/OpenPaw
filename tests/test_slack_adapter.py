@@ -352,11 +352,10 @@ class TestSlackAdapterLifecycle:
         async def dummy_handler(msg):
             return None
 
-        with patch(
-            "openpaws.channels.slack.AsyncApp"
-        ) as mock_app_cls, patch(
-            "openpaws.channels.slack.AsyncSocketModeHandler"
-        ) as mock_handler_cls:
+        with (
+            patch("openpaws.channels.slack.AsyncApp") as mock_app_cls,
+            patch("openpaws.channels.slack.AsyncSocketModeHandler") as mock_handler_cls,
+        ):
             mock_app = MagicMock()
             mock_app_cls.return_value = mock_app
 
