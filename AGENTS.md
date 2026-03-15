@@ -68,7 +68,11 @@ src/openpaws/
 ├── daemon.py        # Daemon process management (PID file, signals, logging)
 ├── runner.py        # Conversation runner (integrates with software-agent-sdk)
 ├── scheduler.py     # Cron-based task scheduling (with storage integration)
-└── storage.py       # SQLite state persistence for tasks and sessions
+├── storage.py       # SQLite state persistence for tasks and sessions
+└── channels/        # Chat platform adapters
+    ├── __init__.py
+    ├── base.py      # Abstract ChannelAdapter interface
+    └── slack.py     # Slack adapter (Socket Mode)
 
 tests/
 ├── conftest.py              # Pytest config, subprocess coverage setup
@@ -77,6 +81,7 @@ tests/
 ├── test_daemon_integration.py  # Integration tests (real process start/stop)
 ├── test_runner.py           # Conversation runner tests
 ├── test_scheduler.py        # Scheduler unit tests
+├── test_slack_adapter.py    # Slack adapter tests
 └── test_storage.py          # SQLite storage tests
 ```
 
@@ -217,6 +222,10 @@ Default location: `~/.openpaws/config.yaml`
 channels:
   telegram:
     bot_token: ${TELEGRAM_BOT_TOKEN}  # Env var expansion
+  
+  slack:
+    app_token: ${SLACK_APP_TOKEN}     # xapp-... (Socket Mode)
+    bot_token: ${SLACK_BOT_TOKEN}     # xoxb-... (API calls)
 
 groups:
   main:
@@ -230,6 +239,8 @@ tasks:
     group: main
     prompt: "Summarize top AI news"
 ```
+
+See [docs/SLACK_SETUP.md](docs/SLACK_SETUP.md) for complete Slack setup instructions.
 
 ## Testing Guidelines
 
