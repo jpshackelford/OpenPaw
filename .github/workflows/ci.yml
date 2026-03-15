@@ -61,7 +61,8 @@ jobs:
       - name: Run tests with coverage
         run: |
           coverage run -m pytest tests/
-          coverage combine || true
+          coverage combine
+          coverage report
 
       - name: Check per-file coverage thresholds
         run: python scripts/check_coverage.py
@@ -72,7 +73,7 @@ jobs:
         with:
           name: coverage-data
           path: .coverage
-          if-no-files-found: error
+          if-no-files-found: warn
 
   complexity:
     name: Complexity
