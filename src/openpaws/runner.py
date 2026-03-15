@@ -10,6 +10,7 @@ from uuid import UUID
 
 from openhands.sdk import LLM, Agent, Conversation
 from openhands.sdk.event.base import Event
+from openhands.sdk.workspace import LocalWorkspace
 from pydantic import SecretStr
 
 from openpaws.config import Config, GroupConfig
@@ -34,6 +35,10 @@ class ConversationRunner:
     This class bridges OpenPaws configuration with the software-agent-sdk,
     creating and managing conversations based on tasks or incoming messages.
 
+    Supports two execution modes:
+    - Local: Uses local workspace (default)
+    - Cloud: Uses OpenHands Cloud sandboxes when OH_API_KEY is configured
+
     Example:
         >>> from openpaws.config import load_config
         >>> config = load_config()
@@ -57,6 +62,7 @@ class ConversationRunner:
 
         self._llm: LLM | None = None
         self._agent: Agent | None = None
+        self._cloud_api_key: str | None = None
 
     @property
     def llm(self) -> LLM:
@@ -126,8 +132,24 @@ class ConversationRunner:
 
         return Agent(**agent_kwargs)
 
-    def _get_group_workspace(self, group: GroupConfig) -> Path:
-        """Get the workspace directory for a group."""
+    def _get_cloud_api_key(self) -> str | None:
+        """Get the OpenHands Cloud API key from config or environment."""
+        if self._cloud_api_key:
+            return self._cloud_api_key
+        key = self.config.agent.cloud_api_key
+        if not key:
+            key = os.environ.get("OH_API_KEY") or os.environ.get(
+                "OPENHANDS_CLOUD_API_KEY"
+            )
+        self._cloud_api_key = key
+        return key
+
+    def uses_cloud_workspace(self) -> bool:
+        """Check if cloud workspace mode is enabled."""
+        return self._get_cloud_api_key() is not None
+
+    def _get_group_workspace_path(self, group: GroupConfig) -> Path:
+        """Get the workspace directory path for a group."""
         workspace = self.base_dir / "groups" / group.name / "workspace"
         workspace.mkdir(parents=True, exist_ok=True)
         return workspace
@@ -137,6 +159,22 @@ class ConversationRunner:
         persistence_dir = self.base_dir / "groups" / group.name / "sessions"
         persistence_dir.mkdir(parents=True, exist_ok=True)
         return persistence_dir
+
+    def _create_cloud_workspace(self):
+        """Create an OpenHands Cloud workspace."""
+        from openhands.workspace import OpenHandsCloudWorkspace
+
+        agent_config = self.config.agent
+        cloud_api_key = self._get_cloud_api_key()
+        if not cloud_api_key:
+            raise ValueError("Cloud API key required for cloud workspace")
+
+        return OpenHandsCloudWorkspace(
+            cloud_api_url=agent_config.cloud_api_url,
+            cloud_api_key=cloud_api_key,
+            sandbox_spec_id=agent_config.sandbox_spec_id,
+            keep_alive=agent_config.keep_alive,
+        )
 
     def _make_event_collector(self, events: list[Event]):
         """Create a callback that appends events to a list."""
@@ -153,17 +191,44 @@ class ConversationRunner:
             callbacks.extend(extra)
         return callbacks
 
-    def _create_conversation(
+    def _create_local_conversation(
         self, group: GroupConfig, conversation_id: UUID | None, callbacks: list
     ) -> Conversation:
-        """Create a Conversation instance for a group."""
+        """Create a local Conversation instance for a group."""
+        workspace = LocalWorkspace(
+            working_dir=str(self._get_group_workspace_path(group))
+        )
         return Conversation(
             agent=self.agent,
-            workspace=self._get_group_workspace(group),
+            workspace=workspace,
             persistence_dir=self._get_group_persistence_dir(group),
             conversation_id=conversation_id,
             callbacks=callbacks,
         )
+
+    def _create_cloud_conversation(
+        self, group: GroupConfig, conversation_id: UUID | None, callbacks: list
+    ) -> Conversation:
+        """Create a cloud-based Conversation instance for a group."""
+        workspace = self._create_cloud_workspace()
+        return Conversation(
+            agent=self.agent,
+            workspace=workspace,
+            persistence_dir=self._get_group_persistence_dir(group),
+            conversation_id=conversation_id,
+            callbacks=callbacks,
+        )
+
+    def _create_conversation(
+        self, group: GroupConfig, conversation_id: UUID | None, callbacks: list
+    ) -> Conversation:
+        """Create a Conversation instance for a group.
+
+        Uses cloud workspace if OH_API_KEY is set, otherwise uses local workspace.
+        """
+        if self.uses_cloud_workspace():
+            return self._create_cloud_conversation(group, conversation_id, callbacks)
+        return self._create_local_conversation(group, conversation_id, callbacks)
 
     def _run_conversation(
         self, conversation: Conversation, prompt: str, events: list[Event]

@@ -62,6 +62,11 @@ class AgentConfig:
     temperature: float | None = None
     max_tokens: int | None = None
     system_prompt: str | None = None
+    # OpenHands Cloud settings (enables remote sandbox execution)
+    cloud_api_url: str = "https://app.all-hands.dev"
+    cloud_api_key: str | None = None  # Set via OH_API_KEY or OPENHANDS_CLOUD_API_KEY
+    sandbox_spec_id: str | None = None
+    keep_alive: bool = False
 
 
 @dataclass

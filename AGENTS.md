@@ -186,13 +186,34 @@ openpaws stop
 
 ## Environment Variables
 
-For testing and running multiple instances:
+### Core Configuration
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `OPENPAWS_DIR` | Base directory for all files | `~/.openpaws` |
 | `OPENPAWS_PID_FILE` | Explicit PID file path | `$OPENPAWS_DIR/openpaws.pid` |
 | `OPENPAWS_LOG_FILE` | Explicit log file path | `$OPENPAWS_DIR/logs/openpaws.log` |
+
+### OpenHands Cloud (Remote Sandbox)
+
+When using OpenHands Cloud sandboxes instead of local execution:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OH_API_KEY` | OpenHands Cloud API key (enables cloud sandboxes) | None |
+| `OPENHANDS_CLOUD_API_KEY` | Alternative name for cloud API key | None |
+
+Get your API key from [app.all-hands.dev/settings/api-keys](https://app.all-hands.dev/settings/api-keys).
+
+**Cloud mode vs Local mode:**
+- **Local mode** (default): Agent runs in your local filesystem
+- **Cloud mode** (when `OH_API_KEY` is set): Agent runs in isolated OpenHands Cloud sandboxes
+
+Example for running with cloud sandboxes:
+```bash
+export OH_API_KEY="your-openhands-cloud-api-key"
+openpaws start
+```
 
 Example for running isolated test instances:
 ```bash
@@ -219,6 +240,15 @@ The daemon uses a PID file (`~/.openpaws/openpaws.pid`) to:
 Default location: `~/.openpaws/config.yaml`
 
 ```yaml
+# Agent configuration
+agent:
+  model: anthropic/claude-sonnet-4-20250514
+  temperature: 0.7
+  # OpenHands Cloud (optional - enables remote sandboxes)
+  cloud_api_key: ${OH_API_KEY}        # Or set via environment variable
+  cloud_api_url: https://app.all-hands.dev
+  keep_alive: false                   # Keep sandbox running after task
+
 channels:
   telegram:
     bot_token: ${TELEGRAM_BOT_TOKEN}  # Env var expansion
