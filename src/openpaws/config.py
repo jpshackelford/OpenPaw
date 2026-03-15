@@ -151,10 +151,18 @@ def _parse_tasks(raw: dict) -> dict[str, TaskConfig]:
     return tasks
 
 
+def _get_default_config_dir() -> Path:
+    """Get config directory, respecting OPENPAWS_DIR env var."""
+    env_dir = os.environ.get("OPENPAWS_DIR")
+    if env_dir:
+        return Path(env_dir)
+    return Path.home() / ".openpaws"
+
+
 def _resolve_config_path(path: Path | str | None) -> Path:
     """Resolve and validate config file path."""
     if path is None:
-        resolved = Path.home() / ".openpaws" / "config.yaml"
+        resolved = _get_default_config_dir() / "config.yaml"
     else:
         resolved = Path(path)
     if not resolved.exists():
