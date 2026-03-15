@@ -66,14 +66,18 @@ src/openpaws/
 ├── cli.py           # Click CLI commands (start, stop, status, tasks)
 ├── config.py        # YAML config parsing with env var expansion
 ├── daemon.py        # Daemon process management (PID file, signals, logging)
-└── scheduler.py     # Cron-based task scheduling
+├── runner.py        # Conversation runner (integrates with software-agent-sdk)
+├── scheduler.py     # Cron-based task scheduling (with storage integration)
+└── storage.py       # SQLite state persistence for tasks and sessions
 
 tests/
 ├── conftest.py              # Pytest config, subprocess coverage setup
 ├── test_config.py           # Config parsing tests
 ├── test_daemon.py           # Unit tests for daemon module
 ├── test_daemon_integration.py  # Integration tests (real process start/stop)
-└── test_scheduler.py        # Scheduler unit tests
+├── test_runner.py           # Conversation runner tests
+├── test_scheduler.py        # Scheduler unit tests
+└── test_storage.py          # SQLite storage tests
 ```
 
 ## Development Commands
