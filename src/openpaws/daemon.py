@@ -408,31 +408,39 @@ class Daemon:
             except Exception as e:
                 logger.error(f"Error stopping {adapter.channel_type} adapter: {e}")
 
-    async def run(self) -> None:
-        """Main daemon run loop."""
-        self._shutdown_event = asyncio.Event()
-        self._setup_signal_handlers()
-        self.state = DaemonState(
-            started_at=datetime.now(), config_path=self.config_path
-        )
-
-        self._load_config()
-        self._setup_scheduler()
-        self._setup_channel_adapters()
-
+    def _log_startup_info(self) -> None:
+        """Log daemon startup information."""
         logger.info(f"OpenPaws daemon started with PID {os.getpid()}")
         logger.info(f"Loaded {len(self.config.tasks)} tasks")
         logger.info(f"Configured {len(self._channel_adapters)} channel adapters")
 
-        self.scheduler.start(self._execute_task)
-        await self._start_channel_adapters()
-
-        await self._shutdown_event.wait()
-
+    async def _shutdown(self) -> None:
+        """Perform graceful shutdown of all components."""
         await self._stop_channel_adapters()
         if self.scheduler:
             self.scheduler.stop()
         logger.info("OpenPaws daemon stopped")
+
+    def _initialize(self) -> None:
+        """Initialize daemon state and components."""
+        self._shutdown_event = asyncio.Event()
+        self.state = DaemonState(
+            started_at=datetime.now(), config_path=self.config_path
+        )
+        self._load_config()
+        self._setup_scheduler()
+        self._setup_channel_adapters()
+
+    async def run(self) -> None:
+        """Main daemon run loop."""
+        self._initialize()
+        self._setup_signal_handlers()
+        self._log_startup_info()
+
+        self.scheduler.start(self._execute_task)
+        await self._start_channel_adapters()
+        await self._shutdown_event.wait()
+        await self._shutdown()
 
     def _daemonize_and_check(self) -> int | None:
         """Fork into background. Returns exit code for parent, None for child."""
