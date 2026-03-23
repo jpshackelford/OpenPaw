@@ -384,6 +384,21 @@ class TestRuntimeSelection:
                 mock_local.assert_called_once()
                 assert result == "local-conv"
 
+    def test_should_use_cloud_invalid_runtime_raises(
+        self, sample_config, temp_base_dir
+    ):
+        """Test that invalid runtime values raise ValueError."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        with pytest.raises(ValueError, match="Invalid runtime"):
+            runner._should_use_cloud(runtime="invalid")
+
+        with pytest.raises(ValueError, match="Invalid runtime"):
+            runner._should_use_cloud(runtime="Cloud")  # Case-sensitive
+
+        with pytest.raises(ValueError, match="Invalid runtime"):
+            runner._should_use_cloud(runtime="")
+
 
 class TestConversationResult:
     """Tests for ConversationResult."""

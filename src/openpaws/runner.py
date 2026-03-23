@@ -11,6 +11,7 @@ from uuid import UUID
 from openhands.sdk import LLM, Agent, Conversation
 from openhands.sdk.event.base import Event
 from openhands.sdk.workspace import LocalWorkspace
+from openhands.workspace import OpenHandsCloudWorkspace
 from pydantic import SecretStr
 
 from openpaws.config import Config, GroupConfig
@@ -162,8 +163,6 @@ class ConversationRunner:
 
     def _create_cloud_workspace(self):
         """Create an OpenHands Cloud workspace."""
-        from openhands.workspace import OpenHandsCloudWorkspace
-
         agent_config = self.config.agent
         cloud_api_key = self._get_cloud_api_key()
         if not cloud_api_key:
@@ -229,8 +228,13 @@ class ConversationRunner:
             True if cloud workspace should be used
 
         Raises:
+            ValueError: If runtime is not a valid option
             ValueError: If runtime is "cloud" but no API key is available
         """
+        if runtime not in ("auto", "cloud", "local"):
+            raise ValueError(
+                f"Invalid runtime '{runtime}'. Must be 'auto', 'cloud', or 'local'"
+            )
         if runtime == "local":
             return False
         if runtime == "cloud":

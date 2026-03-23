@@ -3,6 +3,7 @@
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 import yaml
 
@@ -56,7 +57,7 @@ class TaskConfig:
     schedule: str | None = None  # Cron expression
     interval: int | None = None  # Seconds between runs
     once: str | None = None  # ISO timestamp for one-time execution
-    runtime: str = "auto"  # "auto", "cloud", or "local"
+    runtime: Literal["auto", "cloud", "local"] = "auto"
 
 
 @dataclass
