@@ -11,6 +11,9 @@ from openpaws.config import AgentConfig, Config, GroupConfig, TaskConfig
 from openpaws.runner import ConversationResult, ConversationRunner
 from openpaws.scheduler import ScheduledTask
 
+# Suppress OpenHands SDK banner for cleaner test output
+os.environ.setdefault("OPENHANDS_SUPPRESS_BANNER", "1")
+
 
 @pytest.fixture
 def sample_config():
@@ -111,12 +114,12 @@ class TestConversationRunner:
             key = runner._get_api_key_for_model("some-other-model")
             assert key == "fallback-key"
 
-    def test_get_group_workspace(self, sample_config, temp_base_dir):
+    def test_get_group_workspace_path(self, sample_config, temp_base_dir):
         """Test workspace directory creation."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
         group = sample_config.groups["main"]
 
-        workspace = runner._get_group_workspace(group)
+        workspace = runner._get_group_workspace_path(group)
 
         assert workspace == temp_base_dir / "groups" / "main" / "workspace"
         assert workspace.exists()
@@ -155,6 +158,247 @@ class TestConversationRunner:
             llm = runner._create_llm()
 
             assert llm.base_url == "http://localhost:4000"
+
+
+class TestCloudWorkspace:
+    """Tests for cloud workspace functionality."""
+
+    def test_uses_cloud_workspace_with_env_var(self, sample_config, temp_base_dir):
+        """Test cloud workspace detection via OH_API_KEY env var."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        with patch.dict(os.environ, {"OH_API_KEY": "test-cloud-key"}, clear=False):
+            runner._cloud_api_key = None  # Reset cached value
+            assert runner.uses_cloud_workspace() is True
+
+    def test_uses_cloud_workspace_with_alt_env_var(self, sample_config, temp_base_dir):
+        """Test cloud workspace detection via OPENHANDS_CLOUD_API_KEY."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        with patch.dict(
+            os.environ, {"OPENHANDS_CLOUD_API_KEY": "alt-cloud-key"}, clear=False
+        ):
+            runner._cloud_api_key = None  # Reset cached value
+            assert runner.uses_cloud_workspace() is True
+
+    def test_uses_local_workspace_by_default(self, sample_config, temp_base_dir):
+        """Test local workspace is used when no cloud key is set."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        # Clear any cloud-related env vars
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("OH_API_KEY", "OPENHANDS_CLOUD_API_KEY")
+        }
+        with patch.dict(os.environ, env, clear=True):
+            runner._cloud_api_key = None  # Reset cached value
+            assert runner.uses_cloud_workspace() is False
+
+    def test_uses_cloud_workspace_with_config(self, temp_base_dir):
+        """Test cloud workspace detection via config."""
+        config = Config(
+            agent=AgentConfig(
+                model="anthropic/claude-sonnet-4-20250514",
+                cloud_api_key="config-cloud-key",
+            ),
+        )
+        runner = ConversationRunner(config, base_dir=temp_base_dir)
+
+        # Clear env vars to ensure config takes precedence
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("OH_API_KEY", "OPENHANDS_CLOUD_API_KEY")
+        }
+        with patch.dict(os.environ, env, clear=True):
+            assert runner.uses_cloud_workspace() is True
+
+    def test_get_cloud_api_key_priority(self, temp_base_dir):
+        """Test that config key takes precedence over env vars."""
+        config = Config(
+            agent=AgentConfig(
+                model="anthropic/claude-sonnet-4-20250514",
+                cloud_api_key="config-key",
+            ),
+        )
+        runner = ConversationRunner(config, base_dir=temp_base_dir)
+
+        with patch.dict(os.environ, {"OH_API_KEY": "env-key"}):
+            key = runner._get_cloud_api_key()
+            assert key == "config-key"
+
+    def test_create_cloud_workspace_builds_correct_params(self, temp_base_dir):
+        """Test that _create_cloud_workspace uses correct config values."""
+        config = Config(
+            agent=AgentConfig(
+                model="anthropic/claude-sonnet-4-20250514",
+                cloud_api_key="test-api-key",
+                cloud_api_url="https://custom.openhands.dev",
+                sandbox_spec_id="custom-spec",
+                keep_alive=True,
+            ),
+        )
+        runner = ConversationRunner(config, base_dir=temp_base_dir)
+
+        # Patch at the import location in runner.py, not the original module
+        with patch(
+            "openpaws.runner.OpenHandsCloudWorkspace"
+        ) as mock_workspace_class:
+            mock_workspace_class.return_value = "mock-workspace"
+            result = runner._create_cloud_workspace()
+
+            mock_workspace_class.assert_called_once_with(
+                cloud_api_url="https://custom.openhands.dev",
+                cloud_api_key="test-api-key",
+                sandbox_spec_id="custom-spec",
+                keep_alive=True,
+            )
+            assert result == "mock-workspace"
+
+    def test_create_cloud_workspace_raises_without_key(self, temp_base_dir):
+        """Test that _create_cloud_workspace raises error without API key."""
+        config = Config(
+            agent=AgentConfig(model="anthropic/claude-sonnet-4-20250514"),
+        )
+        runner = ConversationRunner(config, base_dir=temp_base_dir)
+
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("OH_API_KEY", "OPENHANDS_CLOUD_API_KEY")
+        }
+        with patch.dict(os.environ, env, clear=True):
+            runner._cloud_api_key = None
+            with pytest.raises(ValueError, match="Cloud API key required"):
+                runner._create_cloud_workspace()
+
+    def test_create_conversation_uses_cloud_when_key_set(
+        self, sample_config, temp_base_dir
+    ):
+        """Test _create_conversation uses cloud workspace when API key is set."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+        group = sample_config.groups["main"]
+
+        with patch.dict(os.environ, {"OH_API_KEY": "test-key"}):
+            runner._cloud_api_key = None
+            with patch.object(runner, "_create_cloud_conversation") as mock_cloud:
+                mock_cloud.return_value = "cloud-conv"
+                result = runner._create_conversation(group, None, [])
+                mock_cloud.assert_called_once()
+                assert result == "cloud-conv"
+
+    def test_create_conversation_uses_local_without_key(
+        self, sample_config, temp_base_dir
+    ):
+        """Test _create_conversation uses local workspace without API key."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+        group = sample_config.groups["main"]
+
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("OH_API_KEY", "OPENHANDS_CLOUD_API_KEY")
+        }
+        with patch.dict(os.environ, env, clear=True):
+            runner._cloud_api_key = None
+            with patch.object(runner, "_create_local_conversation") as mock_local:
+                mock_local.return_value = "local-conv"
+                result = runner._create_conversation(group, None, [])
+                mock_local.assert_called_once()
+                assert result == "local-conv"
+
+
+class TestRuntimeSelection:
+    """Tests for explicit runtime selection."""
+
+    def test_should_use_cloud_local_runtime(self, sample_config, temp_base_dir):
+        """Test runtime='local' always uses local workspace."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        # Even with cloud key set, should return False for local runtime
+        with patch.dict(os.environ, {"OH_API_KEY": "test-key"}):
+            runner._cloud_api_key = None
+            assert runner._should_use_cloud(runtime="local") is False
+
+    def test_should_use_cloud_cloud_runtime_with_key(
+        self, sample_config, temp_base_dir
+    ):
+        """Test runtime='cloud' uses cloud when key is available."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        with patch.dict(os.environ, {"OH_API_KEY": "test-key"}):
+            runner._cloud_api_key = None
+            assert runner._should_use_cloud(runtime="cloud") is True
+
+    def test_should_use_cloud_cloud_runtime_without_key_raises(
+        self, sample_config, temp_base_dir
+    ):
+        """Test runtime='cloud' raises error when no key is available."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("OH_API_KEY", "OPENHANDS_CLOUD_API_KEY")
+        }
+        with patch.dict(os.environ, env, clear=True):
+            runner._cloud_api_key = None
+            with pytest.raises(ValueError, match="requires OH_API_KEY"):
+                runner._should_use_cloud(runtime="cloud")
+
+    def test_should_use_cloud_auto_runtime_with_key(self, sample_config, temp_base_dir):
+        """Test runtime='auto' uses cloud when key is available."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        with patch.dict(os.environ, {"OH_API_KEY": "test-key"}):
+            runner._cloud_api_key = None
+            assert runner._should_use_cloud(runtime="auto") is True
+
+    def test_should_use_cloud_auto_runtime_without_key(
+        self, sample_config, temp_base_dir
+    ):
+        """Test runtime='auto' uses local when no key is available."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("OH_API_KEY", "OPENHANDS_CLOUD_API_KEY")
+        }
+        with patch.dict(os.environ, env, clear=True):
+            runner._cloud_api_key = None
+            assert runner._should_use_cloud(runtime="auto") is False
+
+    def test_create_conversation_respects_runtime_local(
+        self, sample_config, temp_base_dir
+    ):
+        """Test _create_conversation uses local when runtime='local'."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+        group = sample_config.groups["main"]
+
+        with patch.dict(os.environ, {"OH_API_KEY": "test-key"}):
+            runner._cloud_api_key = None
+            with patch.object(runner, "_create_local_conversation") as mock_local:
+                mock_local.return_value = "local-conv"
+                result = runner._create_conversation(group, None, [], runtime="local")
+                mock_local.assert_called_once()
+                assert result == "local-conv"
+
+    def test_should_use_cloud_invalid_runtime_raises(
+        self, sample_config, temp_base_dir
+    ):
+        """Test that invalid runtime values raise ValueError."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        with pytest.raises(ValueError, match="Invalid runtime"):
+            runner._should_use_cloud(runtime="invalid")
+
+        with pytest.raises(ValueError, match="Invalid runtime"):
+            runner._should_use_cloud(runtime="Cloud")  # Case-sensitive
+
+        with pytest.raises(ValueError, match="Invalid runtime"):
+            runner._should_use_cloud(runtime="")
 
 
 class TestConversationResult:
@@ -202,7 +446,7 @@ class TestRunTask:
 
     @pytest.mark.asyncio
     async def test_run_task_calls_run_prompt(self, sample_config, temp_base_dir):
-        """Test that run_task delegates to run_prompt."""
+        """Test that run_task delegates to run_prompt with runtime."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
 
         task = ScheduledTask(config=sample_config.tasks["morning"])
@@ -218,6 +462,7 @@ class TestRunTask:
             mock_run_prompt.assert_called_once_with(
                 group_name="main",
                 prompt="Good morning! What's the weather?",
+                runtime="auto",  # Default runtime from TaskConfig
             )
 
 
