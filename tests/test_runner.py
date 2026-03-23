@@ -241,8 +241,9 @@ class TestCloudWorkspace:
         )
         runner = ConversationRunner(config, base_dir=temp_base_dir)
 
+        # Patch at the import location in runner.py, not the original module
         with patch(
-            "openhands.workspace.OpenHandsCloudWorkspace"
+            "openpaws.runner.OpenHandsCloudWorkspace"
         ) as mock_workspace_class:
             mock_workspace_class.return_value = "mock-workspace"
             result = runner._create_cloud_workspace()

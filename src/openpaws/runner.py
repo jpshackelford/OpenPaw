@@ -218,23 +218,19 @@ class ConversationRunner:
             callbacks=callbacks,
         )
 
-    def _should_use_cloud(self, runtime: str = "auto") -> bool:
-        """Determine if cloud workspace should be used based on runtime setting.
-
-        Args:
-            runtime: "auto", "cloud", or "local"
-
-        Returns:
-            True if cloud workspace should be used
-
-        Raises:
-            ValueError: If runtime is not a valid option
-            ValueError: If runtime is "cloud" but no API key is available
-        """
+    def _validate_runtime(self, runtime: str) -> None:
+        """Validate runtime is a valid option."""
         if runtime not in ("auto", "cloud", "local"):
             raise ValueError(
                 f"Invalid runtime '{runtime}'. Must be 'auto', 'cloud', or 'local'"
             )
+
+    def _should_use_cloud(self, runtime: str = "auto") -> bool:
+        """Determine if cloud workspace should be used based on runtime setting.
+
+        Raises ValueError for invalid runtime or if cloud is requested without API key.
+        """
+        self._validate_runtime(runtime)
         if runtime == "local":
             return False
         if runtime == "cloud":
@@ -243,8 +239,7 @@ class ConversationRunner:
                     "Runtime 'cloud' requires OH_API_KEY or OPENHANDS_CLOUD_API_KEY"
                 )
             return True
-        # runtime == "auto"
-        return self.uses_cloud_workspace()
+        return self.uses_cloud_workspace()  # runtime == "auto"
 
     def _create_conversation(
         self,
