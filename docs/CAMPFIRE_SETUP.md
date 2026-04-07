@@ -292,11 +292,138 @@ In this setup, set the bot's webhook URL to: `http://openpaws:8765/webhook`
 
 ---
 
+## Remote Campfire Setup
+
+If your Campfire instance is hosted publicly (e.g., on a cloud server) but OpenPaws runs locally, Campfire won't be able to reach your webhook directly. Here are two recommended solutions:
+
+### Option A: ngrok Tunnel (Recommended for Development)
+
+[ngrok](https://ngrok.com) creates a secure tunnel from a public URL to your local machine.
+
+**1. Install ngrok:**
+```bash
+# macOS
+brew install ngrok
+
+# Linux
+curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | \
+  sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null && \
+  echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | \
+  sudo tee /etc/apt/sources.list.d/ngrok.list && \
+  sudo apt update && sudo apt install ngrok
+```
+
+**2. Sign up and configure:**
+```bash
+# Get your authtoken from https://dashboard.ngrok.com/get-started/your-authtoken
+ngrok config add-authtoken YOUR_AUTH_TOKEN
+```
+
+**3. Start the tunnel:**
+```bash
+# Terminal 1: Start OpenPaws
+openpaws start
+
+# Terminal 2: Start ngrok tunnel
+ngrok http 8765
+```
+
+ngrok will display a public URL like:
+```
+Forwarding    https://abc123.ngrok-free.app -> http://localhost:8765
+```
+
+**4. Configure Campfire bot webhook:**
+```
+https://abc123.ngrok-free.app/webhook
+```
+
+**Notes:**
+- Free tier URL changes each restart (paid plans offer stable URLs)
+- ngrok adds ~50-100ms latency
+- Great for development and testing
+
+---
+
+### Option B: Cloudflare Tunnel (Recommended for Production)
+
+[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) provides a free, stable tunnel without exposing ports.
+
+**1. Install cloudflared:**
+```bash
+# macOS
+brew install cloudflared
+
+# Linux
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+chmod +x cloudflared
+sudo mv cloudflared /usr/local/bin/
+```
+
+**2. Authenticate with Cloudflare:**
+```bash
+cloudflared tunnel login
+```
+
+**3. Create a tunnel:**
+```bash
+cloudflared tunnel create openpaws
+```
+
+**4. Configure the tunnel** (`~/.cloudflared/config.yml`):
+```yaml
+tunnel: openpaws
+credentials-file: /path/to/.cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  - hostname: openpaws.yourdomain.com
+    service: http://localhost:8765
+  - service: http_status:404
+```
+
+**5. Route DNS:**
+```bash
+cloudflared tunnel route dns openpaws openpaws.yourdomain.com
+```
+
+**6. Run the tunnel:**
+```bash
+# One-time
+cloudflared tunnel run openpaws
+
+# Or as a service
+sudo cloudflared service install
+```
+
+**7. Configure Campfire bot webhook:**
+```
+https://openpaws.yourdomain.com/webhook
+```
+
+**Notes:**
+- Requires a domain managed by Cloudflare (free tier works)
+- Stable URL that persists across restarts
+- Can run as a system service
+- No port forwarding or firewall changes needed
+
+---
+
+### Other Approaches
+
+If the above options don't fit your setup, consider:
+
+- **Tailscale/WireGuard VPN:** Put both Campfire and OpenPaws on the same private network using [Tailscale](https://tailscale.com) or WireGuard, then use internal IPs
+- **Reverse SSH tunnel:** If you have SSH access to the Campfire server, create a reverse tunnel (`ssh -R 8765:localhost:8765 user@campfire-server`)
+- **localtunnel:** Free alternative to ngrok (`npx localtunnel --port 8765`), but less reliable
+- **Self-hosted tunnel:** Run your own tunnel server with [frp](https://github.com/fatedier/frp) or [bore](https://github.com/ekzhang/bore)
+
+---
+
 ## Security Considerations
 
-1. **Network isolation:** Keep Campfire and OpenPaws on the same trusted network
-2. **Webhook authentication:** Campfire doesn't sign webhook payloads — rely on network security
-3. **HTTPS:** For production, consider putting OpenPaws behind a reverse proxy with TLS
+1. **Tunnel security:** When using tunnels, your webhook is publicly accessible — consider adding authentication headers or IP allowlists if your tunnel supports it
+2. **Webhook authentication:** Campfire doesn't sign webhook payloads — rely on network security or tunnel access controls
+3. **HTTPS:** Always use HTTPS for public webhooks (ngrok and Cloudflare provide this automatically)
 4. **Bot key protection:** Don't commit `CAMPFIRE_BOT_KEY` to version control
 
 ---
