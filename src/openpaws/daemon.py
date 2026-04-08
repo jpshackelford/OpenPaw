@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from openpaws.channels.base import ChannelAdapter, IncomingMessage
+from openpaws.channels.base import ChannelAdapter, IncomingMessage, OutgoingMessage
 from openpaws.channels.campfire import CampfireAdapter, CampfireConfig
 from openpaws.channels.gmail import GmailAdapter, GmailConfig
 from openpaws.channels.slack import SlackAdapter, SlackConfig
@@ -318,6 +318,7 @@ class Daemon:
         self.state: DaemonState | None = None
         self._shutdown_event: asyncio.Event | None = None
         self._channel_adapters: list[ChannelAdapter] = []
+        self._channel_adapters_by_type: dict[str, ChannelAdapter] = {}
         self._runner: ConversationRunner | None = None
 
     def _setup_signal_handlers(self) -> None:
@@ -332,11 +333,39 @@ class Daemon:
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, lambda s=sig: signal_handler(s))
 
+    async def _send_task_result_to_channel(self, task, message: str) -> None:
+        """Send task result to the task's configured channel."""
+        task_name = task.config.name
+        group_name = task.config.group
+        group = self.config.groups.get(group_name)
+        if not group:
+            logger.warning(f"Task '{task_name}' references unknown group: {group_name}")
+            return
+
+        channel = group.channel
+        adapter = self._channel_adapters_by_type.get(channel)
+        if not adapter:
+            logger.warning(f"No adapter for channel '{channel}' (task: {task_name})")
+            return
+
+        if not adapter.is_running():
+            logger.warning(f"Adapter '{channel}' not running, skipping task result")
+            return
+
+        outgoing = OutgoingMessage(channel_id=group.chat_id, text=message)
+        try:
+            await adapter.send_message(outgoing)
+            logger.info(f"Task '{task_name}' sent to {channel}:{group.chat_id}")
+        except Exception as e:
+            logger.error(f"Failed to send task result to channel: {e}")
+
     async def _execute_task(self, task) -> str:
-        """Execute a scheduled task."""
+        """Execute a scheduled task and send result to configured channel."""
         logger.info(f"Executing task: {task.config.name}")
         if self._runner:
             result = await self._runner.run_task(task)
+            if result.success and result.message:
+                await self._send_task_result_to_channel(task, result.message)
             return result.message
         return f"Task '{task.config.name}' executed at {datetime.now()}"
 
@@ -363,6 +392,9 @@ class Daemon:
         """Initialize scheduler with configured tasks."""
         self.scheduler = Scheduler(storage=self.storage)
         for task_config in self.config.tasks.values():
+            if not task_config.enabled:
+                logger.info(f"Skipping disabled task: {task_config.name}")
+                continue
             self.scheduler.add_task(task_config)
             logger.info(f"Scheduled task: {task_config.name}")
 
@@ -469,28 +501,30 @@ class Daemon:
             logger.error(f"Invalid Campfire config: {e}")
             return None
 
+    def _register_adapter(self, adapter: ChannelAdapter, name: str) -> None:
+        """Register an adapter in both the list and type lookup dict."""
+        self._channel_adapters.append(adapter)
+        self._channel_adapters_by_type[adapter.channel_type] = adapter
+        logger.info(f"Configured {adapter.channel_type} channel: {name}")
+
     def _setup_channel_adapters(self) -> None:
         """Initialize channel adapters from configuration."""
         self._channel_adapters = []
+        self._channel_adapters_by_type = {}
 
         for name, channel_config in self.config.channels.items():
+            adapter = None
             if channel_config.type == "slack":
                 adapter = self._create_slack_adapter(channel_config)
-                if adapter:
-                    self._channel_adapters.append(adapter)
-                    logger.info(f"Configured Slack channel: {name}")
             elif channel_config.type == "gmail":
                 adapter = self._create_gmail_adapter(channel_config)
-                if adapter:
-                    self._channel_adapters.append(adapter)
-                    logger.info(f"Configured Gmail channel: {name}")
             elif channel_config.type == "campfire":
                 adapter = self._create_campfire_adapter(channel_config)
-                if adapter:
-                    self._channel_adapters.append(adapter)
-                    logger.info(f"Configured Campfire channel: {name}")
             else:
                 logger.debug(f"Skipping channel type: {channel_config.type}")
+
+            if adapter:
+                self._register_adapter(adapter, name)
 
     async def _start_channel_adapters(self) -> None:
         """Start all configured channel adapters."""

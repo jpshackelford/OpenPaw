@@ -48,6 +48,8 @@ class TaskConfig:
     - schedule: Cron expression (e.g., "0 9 * * *")
     - interval: Run every N seconds (e.g., 3600 for every hour)
     - once: Run at a specific timestamp (ISO format or "YYYY-MM-DD HH:MM")
+
+    Set enabled=False to pause a task without removing it from config.
     """
 
     name: str
@@ -56,6 +58,7 @@ class TaskConfig:
     schedule: str | None = None  # Cron expression
     interval: int | None = None  # Seconds between runs
     once: str | None = None  # ISO timestamp for one-time execution
+    enabled: bool = True  # Set to False to disable without removing
 
 
 @dataclass

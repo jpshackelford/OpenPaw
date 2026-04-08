@@ -9,7 +9,7 @@ Built on [OpenHands software-agent-sdk](https://github.com/OpenHands/software-ag
 OpenPaws turns the OpenHands SDK from "run an agent when I call it" into "have a persistent assistant that runs scheduled tasks and responds via chat apps."
 
 **Features:**
-- 📅 **Scheduled Tasks** - Cron-based recurring tasks
+- 📅 **Scheduled Tasks** - Cron-based recurring tasks that post results to chat
 - 💬 **Chat Connectors** - Campfire, Slack, Telegram, Gmail
 - 🔒 **Sandboxed Execution** - Runs agents in isolated environments
 - ⚡ **Minimal Config** - YAML config + small CLI
@@ -99,10 +99,26 @@ tasks:
     schedule: "0 9 * * 1-5"  # 9 AM weekdays
     group: team
     prompt: "What should I focus on today?"
+    enabled: true            # Set to false to pause without removing
+
+  dad-jokes:
+    schedule: "*/5 * * * *"  # Every 5 minutes
+    group: team
+    prompt: "Tell me a dad joke."
+    enabled: false           # Paused - won't run until enabled
 
 agent:
   model: anthropic/claude-sonnet-4-20250514
 ```
+
+### Task Scheduling
+
+Tasks run on a cron schedule and automatically post their results to the configured channel. Each task needs:
+
+- **schedule**: Cron expression (e.g., `"0 9 * * *"` for 9 AM daily, `"*/5 * * * *"` for every 5 minutes)
+- **group**: Which chat group to post results to
+- **prompt**: What to ask the AI agent
+- **enabled** (optional): Set to `false` to pause without removing from config (defaults to `true`)
 
 ## Documentation
 
