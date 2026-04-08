@@ -413,6 +413,70 @@ def print_next_steps(hostname: str, disable_tls: bool) -> None:
     print()
 
 
+def check_prerequisites(skip_campfire: bool, skip_openpaws: bool) -> bool:
+    """Check all prerequisites upfront. Returns True if all checks pass."""
+    log_info("Checking prerequisites...")
+    all_ok = True
+
+    # Python version
+    if sys.version_info < (3, 10):
+        log_error(f"Python 3.10+ required, found {sys.version}")
+        all_ok = False
+    else:
+        log_success(f"Python {sys.version_info.major}.{sys.version_info.minor}")
+
+    # Docker (only if installing Campfire)
+    if not skip_campfire:
+        if not command_exists("docker"):
+            log_error("Docker is not installed")
+            if detect_os() == "darwin":
+                log_info(
+                    "  Install from: https://www.docker.com/products/docker-desktop"
+                )
+            else:
+                log_info("  Install with: curl -fsSL https://get.docker.com | sh")
+            all_ok = False
+        else:
+            result = run_command(["docker", "info"], check=False, capture=True)
+            if result.returncode != 0:
+                log_error("Docker is installed but not running")
+                if detect_os() == "darwin":
+                    log_info("  Please start Docker Desktop")
+                else:
+                    log_info("  Start with: sudo systemctl start docker")
+                    log_info("  Or add yourself to docker group: sudo usermod -aG docker $USER")
+                all_ok = False
+            else:
+                log_success("Docker is running")
+
+    # curl (needed for installing uv and once)
+    if not command_exists("curl"):
+        log_error("curl is not installed")
+        log_info("  Install curl using your package manager")
+        all_ok = False
+    else:
+        log_success("curl is available")
+
+    # uv (will be installed if missing, but warn if not present)
+    if not skip_openpaws:
+        if command_exists("uv"):
+            log_success("uv is installed")
+        else:
+            log_warn("uv not found (will be installed automatically)")
+
+    # PyYAML (needed for config merging if config exists)
+    config_file = Path.home() / ".openpaws" / "config.yaml"
+    if config_file.exists():
+        try:
+            import yaml  # noqa: F401
+            log_success("PyYAML available (for config merging)")
+        except ImportError:
+            log_warn("PyYAML not installed - existing config will be backed up, not merged")
+
+    print()
+    return all_ok
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Setup script for Campfire + OpenPaws integration",
@@ -471,15 +535,19 @@ Examples:
     log_info(f"  Skip OpenPaws: {args.skip_openpaws}")
     print()
 
+    # Fail fast: check all prerequisites upfront
+    if not check_prerequisites(args.skip_campfire, args.skip_openpaws):
+        log_error("Prerequisites not met. Please fix the issues above and try again.")
+        sys.exit(1)
+
     # Campfire installation
     if not args.skip_campfire:
-        check_docker()
         install_once_cli()
         deploy_campfire(args.hostname, args.disable_tls)
 
     # OpenPaws installation
     if not args.skip_openpaws:
-        check_uv()
+        check_uv()  # This will install uv if missing
         install_openpaws(args.openpaws_branch)
 
     # Configuration
