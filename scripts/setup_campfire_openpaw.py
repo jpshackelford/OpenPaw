@@ -490,7 +490,33 @@ agent:
     config_file.write_text(config_content)
 
 
-def print_next_steps(hostname: str, disable_tls: bool) -> None:
+def run_setup_wizard(hostname: str, disable_tls: bool) -> bool:
+    """Run the interactive Campfire setup wizard.
+
+    Returns True if wizard completed successfully, False otherwise.
+    """
+    campfire_url = f"{'http' if disable_tls else 'https'}://{hostname}"
+
+    log_info("Running Campfire setup wizard...")
+    print()
+
+    try:
+        result = subprocess.run(
+            ["openpaws", "setup", "campfire", "--url", campfire_url],
+            check=False,
+        )
+        return result.returncode == 0
+    except FileNotFoundError:
+        log_error("openpaws command not found")
+        log_info("Try running: openpaws setup campfire")
+        return False
+    except KeyboardInterrupt:
+        print()
+        log_info("Setup wizard cancelled")
+        return False
+
+
+def print_next_steps(hostname: str, disable_tls: bool, wizard_completed: bool) -> None:
     """Print post-installation instructions."""
     campfire_url = f"{'http' if disable_tls else 'https'}://{hostname}"
 
@@ -499,35 +525,47 @@ def print_next_steps(hostname: str, disable_tls: bool) -> None:
     print(f"{GREEN}                    Installation Complete!                      {NC}")
     print(f"{GREEN}═══════════════════════════════════════════════════════════════{NC}")
     print()
-    print(f"{BLUE}Next Steps:{NC}")
-    print()
-    print(f"1. {YELLOW}Set up Campfire:{NC}")
-    print(f"   Open: {campfire_url}")
-    print("   Complete the initial setup wizard")
-    print()
-    print(f"2. {YELLOW}Create a bot in Campfire:{NC}")
-    print("   • Go to Account → Bots")
-    print("   • Click 'New bot'")
-    print("   • Name: OpenPaws (or your preference)")
-    print("   • Webhook URL: http://localhost:8765/webhook")
-    print("   • Copy the bot key (format: 123-abc123xyz)")
-    print()
-    print(f"3. {YELLOW}Configure OpenPaws:{NC}")
-    print("   export CAMPFIRE_BOT_KEY='your-bot-key-here'")
-    print("   # Or add to ~/.openpaws/.env")
-    print()
-    print(f"4. {YELLOW}Start OpenPaws:{NC}")
-    print("   openpaws start")
-    print()
-    print(f"5. {YELLOW}Test the integration:{NC}")
-    print("   In Campfire, @mention your bot: @OpenPaws hello")
-    print()
+
+    if wizard_completed:
+        # Wizard already ran - simpler next steps
+        print(f"{BLUE}Next Steps:{NC}")
+        print()
+        print(f"1. {YELLOW}Start OpenPaws:{NC}")
+        print("   openpaws start")
+        print()
+        print(f"2. {YELLOW}Test the integration:{NC}")
+        print("   In Campfire, @mention your bot: @OpenPaws hello")
+        print()
+    else:
+        # Wizard didn't run - full instructions
+        print(f"{BLUE}Next Steps:{NC}")
+        print()
+        print(f"1. {YELLOW}Set up Campfire:{NC}")
+        print(f"   Open: {campfire_url}")
+        print("   Complete the initial setup wizard")
+        print()
+        print(f"2. {YELLOW}Run the bot setup wizard:{NC}")
+        print("   openpaws setup campfire")
+        print()
+        print("   This will guide you through:")
+        print("   • Creating a bot in Campfire")
+        print("   • Configuring the webhook")
+        print("   • Testing the connection")
+        print()
+        print(f"3. {YELLOW}Start OpenPaws:{NC}")
+        print("   openpaws start")
+        print()
+        print(f"4. {YELLOW}Test the integration:{NC}")
+        print("   In Campfire, @mention your bot: @OpenPaws hello")
+        print()
+
     print(f"{BLUE}Useful Commands:{NC}")
-    print("   openpaws status     # Check daemon status")
-    print("   openpaws logs       # View logs")
-    print("   openpaws stop       # Stop the daemon")
-    print("   once                # Manage Campfire (TUI)")
-    print("   once list           # List deployed apps")
+    print("   openpaws setup campfire  # Configure Campfire bot")
+    print("   openpaws status          # Check daemon status")
+    print("   openpaws logs            # View logs")
+    print("   openpaws stop            # Stop the daemon")
+    print("   once                     # Manage Campfire (TUI)")
+    print("   once list                # List deployed apps")
     print()
     print(f"{BLUE}Documentation:{NC}")
     print("   • Campfire Setup: docs/CAMPFIRE_SETUP.md")
@@ -610,6 +648,15 @@ def check_prerequisites(
     return all_ok
 
 
+def prompt_yes_no(prompt: str, default: bool = True) -> bool:
+    """Prompt for yes/no input."""
+    suffix = " [Y/n] " if default else " [y/N] "
+    response = input(prompt + suffix).strip().lower()
+    if not response:
+        return default
+    return response in ("y", "yes")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Setup script for Campfire + OpenPaws integration",
@@ -624,6 +671,9 @@ Examples:
 
   # Only install OpenPaws (Campfire already running)
   python scripts/setup_campfire_openpaw.py --skip-campfire
+
+  # Install without running the bot setup wizard
+  python scripts/setup_campfire_openpaw.py --disable-tls --no-wizard
 """,
     )
     parser.add_argument(
@@ -651,6 +701,11 @@ Examples:
         action="store_true",
         help="Skip OpenPaws installation",
     )
+    parser.add_argument(
+        "--no-wizard",
+        action="store_true",
+        help="Skip the interactive bot setup wizard",
+    )
 
     args = parser.parse_args()
 
@@ -666,6 +721,7 @@ Examples:
     log_info(f"  OpenPaws branch: {args.openpaws_branch}")
     log_info(f"  Skip Campfire: {args.skip_campfire}")
     log_info(f"  Skip OpenPaws: {args.skip_openpaws}")
+    log_info(f"  Run wizard: {not args.no_wizard}")
     print()
 
     # Fail fast: check all prerequisites upfront
@@ -683,11 +739,23 @@ Examples:
         check_uv()  # This will install uv if missing
         install_openpaws(args.openpaws_branch)
 
-    # Configuration
+    # Configuration (basic config file setup)
     configure_openpaws(args.hostname, args.disable_tls)
 
+    # Interactive bot setup wizard
+    wizard_completed = False
+    if not args.no_wizard and not args.skip_openpaws:
+        print()
+        print(f"{BLUE}{'─' * 63}{NC}")
+        print()
+        if prompt_yes_no("Would you like to configure the Campfire bot now?"):
+            wizard_completed = run_setup_wizard(args.hostname, args.disable_tls)
+        else:
+            log_info("Skipping bot setup wizard")
+            log_info("You can run it later with: openpaws setup campfire")
+
     # Next steps
-    print_next_steps(args.hostname, args.disable_tls)
+    print_next_steps(args.hostname, args.disable_tls, wizard_completed)
 
 
 if __name__ == "__main__":
