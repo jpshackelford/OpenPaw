@@ -1,11 +1,14 @@
 """OpenPaws CLI."""
 
 import asyncio
+import re
 import subprocess
 import sys
+import webbrowser
 from pathlib import Path
 
 import click
+import yaml
 
 from openpaws.config import Config, TaskConfig, load_config
 from openpaws.daemon import Daemon, get_daemon_status, get_log_file
@@ -432,6 +435,267 @@ def logs(group, task, lines, follow):
             _follow_logs(log_path)
     else:
         _show_recent_logs(log_path, lines, filter_pattern)
+
+
+@main.group()
+def setup():
+    """Setup wizards for channels and integrations."""
+    pass
+
+
+def _get_config_dir() -> Path:
+    """Get the OpenPaws config directory."""
+    import os
+
+    base = os.environ.get("OPENPAWS_DIR", str(Path.home() / ".openpaws"))
+    return Path(base)
+
+
+def _get_config_file() -> Path:
+    """Get the config file path."""
+    return _get_config_dir() / "config.yaml"
+
+
+def _load_config_yaml() -> dict:
+    """Load config as raw YAML dict."""
+    config_file = _get_config_file()
+    if config_file.exists():
+        with open(config_file) as f:
+            return yaml.safe_load(f) or {}
+    return {}
+
+
+def _save_config_yaml(config: dict) -> None:
+    """Save config dict to YAML file."""
+    config_dir = _get_config_dir()
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_file = config_dir / "config.yaml"
+
+    with open(config_file, "w") as f:
+        f.write("# OpenPaws Configuration\n")
+        f.write("# See docs/CAMPFIRE_SETUP.md for setup instructions\n\n")
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+
+def _parse_campfire_curl(curl_cmd: str) -> tuple[str, str, str] | None:
+    """Parse Campfire bot curl command to extract base_url, room_id, bot_key.
+
+    Expected format:
+        curl -d 'Hello!' http://campfire.localhost/rooms/1/2-rk2SGfi9lZW0/messages
+
+    Returns (base_url, room_id, bot_key) or None if parsing fails.
+    """
+    # Match URL pattern: http(s)://host/rooms/{room_id}/{bot_key}/messages
+    pattern = r"(https?://[^/]+)/rooms/(\d+)/([^/]+)/messages"
+    match = re.search(pattern, curl_cmd)
+    if match:
+        return match.group(1), match.group(2), match.group(3)
+    return None
+
+
+def _test_campfire_connection(base_url: str, room_id: str, bot_key: str) -> bool:
+    """Test if we can send a message to Campfire."""
+    import urllib.request
+    import urllib.error
+
+    url = f"{base_url}/rooms/{room_id}/{bot_key}/messages"
+    data = "🐾 OpenPaws connected successfully!".encode("utf-8")
+
+    try:
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "text/plain; charset=utf-8"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status == 201
+    except urllib.error.HTTPError as e:
+        click.echo(f"   HTTP Error: {e.code} - {e.reason}")
+        return False
+    except urllib.error.URLError as e:
+        click.echo(f"   Connection Error: {e.reason}")
+        return False
+    except Exception as e:
+        click.echo(f"   Error: {e}")
+        return False
+
+
+@setup.command("campfire")
+@click.option("--url", help="Campfire base URL (e.g., http://campfire.localhost)")
+@click.option("--bot-key", help="Bot key from Campfire (e.g., 2-rk2SGfi9lZW0)")
+@click.option("--room-id", help="Default room ID (e.g., 1)")
+@click.option("--webhook-port", default=8765, help="Local webhook port (default: 8765)")
+@click.option("--no-browser", is_flag=True, help="Don't open browser automatically")
+def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
+    """Interactive setup wizard for Campfire integration.
+
+    This wizard will guide you through:
+    1. Opening Campfire to create a bot
+    2. Configuring the webhook URL
+    3. Extracting the bot key
+    4. Testing the connection
+    5. Saving the configuration
+    """
+    click.echo()
+    click.echo("🏕️  Campfire Setup Wizard")
+    click.echo("═" * 40)
+    click.echo()
+
+    # Step 1: Get Campfire URL
+    if not url:
+        url = click.prompt(
+            "Campfire URL",
+            default="http://campfire.localhost",
+        )
+
+    # Normalize URL
+    url = url.rstrip("/")
+    if not url.startswith(("http://", "https://")):
+        url = f"http://{url}"
+
+    click.echo()
+    click.echo(f"📍 Using Campfire at: {url}")
+
+    # Step 2: Guide user to create bot
+    if not bot_key:
+        click.echo()
+        click.echo("─" * 40)
+        click.echo("Step 1: Create a Bot in Campfire")
+        click.echo("─" * 40)
+        click.echo()
+        click.echo("You need to create a bot in Campfire's admin panel.")
+        click.echo()
+        click.echo("Bot settings to use:")
+        click.echo(f"  • Name: OpenPaws (or your preference)")
+        click.echo(f"  • Webhook URL: http://localhost:{webhook_port}/webhook")
+        click.echo()
+
+        bot_url = f"{url}/account/bots"
+
+        if not no_browser:
+            if click.confirm("Open Campfire bot settings in browser?", default=True):
+                click.echo(f"   Opening {bot_url}...")
+                webbrowser.open(bot_url)
+                click.echo()
+
+        click.echo("After creating the bot, Campfire will show you curl commands like:")
+        click.echo()
+        click.echo(
+            f'  curl -d \'Hello!\' {url}/rooms/1/YOUR-BOT-KEY/messages'
+        )
+        click.echo()
+
+        # Get the curl command or bot key
+        click.echo("─" * 40)
+        click.echo("Step 2: Enter Bot Information")
+        click.echo("─" * 40)
+        click.echo()
+        click.echo("Paste one of the curl commands from Campfire, or just the bot key:")
+        click.echo()
+        user_input = click.prompt("Curl command or bot key").strip()
+
+        # Try to parse as curl command first
+        parsed = _parse_campfire_curl(user_input)
+        if parsed:
+            _, room_id, bot_key = parsed
+            click.echo(f"   ✓ Extracted bot key: {bot_key}")
+            click.echo(f"   ✓ Extracted room ID: {room_id}")
+        else:
+            # Assume it's just the bot key
+            bot_key = user_input
+            if "-" not in bot_key:
+                click.echo("   ⚠️  Bot key should be in format: ID-TOKEN (e.g., 2-rk2SGfi9lZW0)")
+
+    # Step 3: Get room ID if not provided
+    if not room_id:
+        click.echo()
+        room_id = click.prompt(
+            "Default room ID (from Campfire URL /rooms/N)",
+            default="1",
+        )
+
+    # Step 4: Test connection
+    click.echo()
+    click.echo("─" * 40)
+    click.echo("Step 3: Testing Connection")
+    click.echo("─" * 40)
+    click.echo()
+    click.echo(f"Testing connection to {url}...")
+
+    if _test_campfire_connection(url, room_id, bot_key):
+        click.echo("   ✅ Connection successful! Check Campfire for the test message.")
+    else:
+        click.echo("   ❌ Connection failed. Check your settings and try again.")
+        if not click.confirm("Continue with setup anyway?", default=False):
+            click.echo("Setup cancelled.")
+            sys.exit(1)
+
+    # Step 5: Save configuration
+    click.echo()
+    click.echo("─" * 40)
+    click.echo("Step 4: Saving Configuration")
+    click.echo("─" * 40)
+    click.echo()
+
+    config = _load_config_yaml()
+
+    # Ensure channels section exists
+    if "channels" not in config:
+        config["channels"] = {}
+
+    # Add/update campfire channel
+    config["channels"]["campfire"] = {
+        "base_url": url,
+        "bot_key": bot_key,
+        "webhook_port": webhook_port,
+        "webhook_path": "/webhook",
+    }
+
+    # Add a default group if none exists for campfire
+    if "groups" not in config:
+        config["groups"] = {}
+
+    has_campfire_group = any(
+        g.get("channel") == "campfire"
+        for g in config.get("groups", {}).values()
+        if isinstance(g, dict)
+    )
+
+    if not has_campfire_group:
+        group_name = "campfire-main"
+        config["groups"][group_name] = {
+            "channel": "campfire",
+            "chat_id": room_id,
+            "trigger": "@paw",
+        }
+        click.echo(f"   Added group '{group_name}' for room {room_id}")
+
+    _save_config_yaml(config)
+    config_file = _get_config_file()
+    click.echo(f"   ✅ Configuration saved to: {config_file}")
+
+    # Final summary
+    click.echo()
+    click.echo("═" * 40)
+    click.echo("🎉 Campfire Setup Complete!")
+    click.echo("═" * 40)
+    click.echo()
+    click.echo("Configuration:")
+    click.echo(f"  • Campfire URL: {url}")
+    click.echo(f"  • Bot Key: {bot_key}")
+    click.echo(f"  • Room ID: {room_id}")
+    click.echo(f"  • Webhook: http://localhost:{webhook_port}/webhook")
+    click.echo()
+    click.echo("Next steps:")
+    click.echo("  1. Start OpenPaws:  openpaws start")
+    click.echo("  2. In Campfire, @mention your bot to test")
+    click.echo()
+    click.echo("Useful commands:")
+    click.echo("  openpaws status    # Check if running")
+    click.echo("  openpaws logs -f   # Follow logs")
+    click.echo("  openpaws stop      # Stop daemon")
+    click.echo()
 
 
 if __name__ == "__main__":
