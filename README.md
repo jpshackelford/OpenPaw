@@ -59,11 +59,7 @@ See [Campfire Setup Guide](docs/CAMPFIRE_SETUP.md) for detailed instructions.
 If you already have Campfire (or want to use Slack/Telegram):
 
 ```bash
-# Install with uv
 uv tool install "openpaws @ git+https://github.com/jpshackelford/OpenPaw.git@feature/campfire-adapter"
-
-# Or with pip
-pip install "openpaws @ git+https://github.com/jpshackelford/OpenPaw.git@feature/campfire-adapter"
 ```
 
 Then create your config manually - see the [documentation](#documentation) for each channel.
