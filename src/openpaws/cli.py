@@ -4,6 +4,8 @@ import asyncio
 import re
 import subprocess
 import sys
+import termios
+import tty
 import webbrowser
 from pathlib import Path
 
@@ -14,6 +16,67 @@ from openpaws.config import Config, TaskConfig, load_config
 from openpaws.daemon import Daemon, get_daemon_status, get_log_file
 from openpaws.scheduler import ScheduledTask
 from openpaws.storage import Storage, TaskState
+
+
+def _confirm(prompt: str, default: bool = True) -> bool:
+    """Prompt for yes/no confirmation, handling CR and LF properly.
+
+    Uses raw terminal mode to read single character, avoiding issues
+    where Enter key sends CR instead of LF.
+    """
+    suffix = " [Y/n]: " if default else " [y/N]: "
+    click.echo(prompt + suffix, nl=False)
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+    click.echo()  # Print newline after input
+
+    if ch in ("\r", "\n", ""):
+        return default
+    if ch.lower() == "y":
+        return True
+    if ch.lower() == "n":
+        return False
+    return default
+
+
+def _prompt(text: str, default: str = "") -> str:
+    """Prompt for text input, handling CR and LF properly."""
+    if default:
+        click.echo(f"{text} [{default}]: ", nl=False)
+    else:
+        click.echo(f"{text}: ", nl=False)
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    result = []
+
+    try:
+        tty.setcbreak(fd)  # Use cbreak mode to allow line editing
+        while True:
+            ch = sys.stdin.read(1)
+            if ch in ("\r", "\n"):
+                break
+            elif ch == "\x7f":  # Backspace
+                if result:
+                    result.pop()
+                    click.echo("\b \b", nl=False)
+            elif ch == "\x03":  # Ctrl+C
+                raise KeyboardInterrupt
+            elif ch >= " ":  # Printable character
+                result.append(ch)
+                click.echo(ch, nl=False)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+    click.echo()  # Print newline after input
+    return "".join(result) or default
 
 
 @click.group()
@@ -600,10 +663,7 @@ def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
 
     # Step 1: Get Campfire URL
     if not url:
-        url = click.prompt(
-            "Campfire URL",
-            default="http://campfire.localhost",
-        )
+        url = _prompt("Campfire URL", default="http://campfire.localhost")
 
     # Normalize URL
     url = url.rstrip("/")
@@ -627,7 +687,7 @@ def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
         click.echo("     once list              # Check if deployed")
         click.echo("     once deploy campfire   # Deploy if needed")
         click.echo()
-        if not click.confirm("Continue anyway?", default=False):
+        if not _confirm("Continue anyway?", default=False):
             sys.exit(1)
     else:
         click.echo(f"   ✅ Campfire is reachable")
@@ -638,10 +698,10 @@ def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
             click.echo("   ⚠️  Campfire initial setup may not be complete")
             click.echo(f"      Open {url} to complete setup first")
             if not no_browser:
-                if click.confirm("Open Campfire in browser to complete setup?", default=True):
+                if _confirm("Open Campfire in browser to complete setup?", default=True):
                     webbrowser.open(url)
                     click.echo()
-                    click.prompt("Press Enter when setup is complete", default="", show_default=False)
+                    _prompt("Press Enter when setup is complete")
 
     # Step 3: Check for existing bot key in config
     existing_config = _load_config_yaml()
@@ -658,7 +718,7 @@ def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
         success, result = _test_campfire_bot_key(url, test_room, existing_bot_key)
         if success:
             click.echo("   ✅ Existing bot key is valid!")
-            if click.confirm("Use existing bot key?", default=True):
+            if _confirm("Use existing bot key?", default=True):
                 bot_key = existing_bot_key
                 # Try to find a valid room if not specified
                 if not room_id:
@@ -686,7 +746,7 @@ def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
         bot_url = f"{url}/account/bots"
 
         if not no_browser:
-            if click.confirm("Open Campfire bot settings in browser?", default=True):
+            if _confirm("Open Campfire bot settings in browser?", default=True):
                 click.echo(f"   Opening {bot_url}...")
                 webbrowser.open(bot_url)
                 click.echo()
@@ -705,7 +765,7 @@ def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
         click.echo()
         click.echo("Paste one of the curl commands from Campfire, or just the bot key:")
         click.echo()
-        user_input = click.prompt("Curl command or bot key").strip()
+        user_input = _prompt("Curl command or bot key").strip()
 
         # Try to parse as curl command first
         parsed = _parse_campfire_curl(user_input)
@@ -730,10 +790,7 @@ def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
             click.echo(f"   ✅ Found room {found_room}")
             room_id = found_room
         else:
-            room_id = click.prompt(
-                "Default room ID (from Campfire URL /rooms/N)",
-                default="1",
-            )
+            room_id = _prompt("Default room ID (from Campfire URL /rooms/N)", default="1")
 
     # Step 6: Test connection
     click.echo()
@@ -764,7 +821,7 @@ def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
         else:
             click.echo(f"   ❌ Connection failed: {result}")
 
-        if not success and not click.confirm("Continue with setup anyway?", default=False):
+        if not success and not _confirm("Continue with setup anyway?", default=False):
             click.echo("Setup cancelled.")
             sys.exit(1)
 
