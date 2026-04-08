@@ -87,6 +87,7 @@ channels:
     base_url: http://campfire.localhost
     bot_key: ${CAMPFIRE_BOT_KEY}
     webhook_port: 8765
+    context_messages: 10    # Recent messages for conversation context
 
 groups:
   team:
@@ -111,6 +112,21 @@ agent:
   model: anthropic/claude-sonnet-4-20250514
 ```
 
+### Conversation Context (Campfire)
+
+When someone @mentions the bot in Campfire, OpenPaws fetches recent messages from the room so the AI understands the conversation context. Configure this with:
+
+```yaml
+channels:
+  campfire:
+    context_messages: 10    # Number of recent messages to include (default: 10)
+                            # Set to 0 to disable context fetching
+```
+
+This allows the bot to give contextual responses based on what people were discussing, not just the single message that triggered it.
+
+> **Note:** Conversation context requires the bot read API, which is available in our Campfire fork. See [Campfire Fork](#campfire-fork) below.
+
 ### Task Scheduling
 
 Tasks run on a cron schedule and automatically post their results to the configured channel. Each task needs:
@@ -126,6 +142,44 @@ Tasks run on a cron schedule and automatically post their results to the configu
 - [Slack Setup](docs/SLACK_SETUP.md) - Slack integration guide
 - [Gmail Setup](docs/GMAIL_SETUP.md) - Gmail integration guide
 - [Design Doc](docs/DESIGN.md) - Architecture and comparison with NanoClaw
+
+## Campfire Fork
+
+OpenPaws uses a fork of Campfire that adds a **bot read API**, allowing bots to read recent messages from rooms they're members of. This enables conversation context - the bot can understand what people were discussing before responding.
+
+**PR:** [basecamp/once-campfire#190](https://github.com/basecamp/once-campfire/pull/190)
+
+### Why a Fork?
+
+The official Campfire bot API only allows bots to *send* messages, not *read* them. Our fork adds a `GET /rooms/:room_id/:bot_key/messages` endpoint that:
+- Returns recent messages from the room
+- Only works for rooms where the bot is a member (same security as posting)
+- Includes pagination support
+
+### Using the Fork
+
+The setup script automatically uses our fork:
+
+```bash
+python scripts/setup_campfire_openpaw.py --disable-tls
+```
+
+If you already have Campfire deployed with the official image, update to the fork:
+
+```bash
+once update campfire.localhost --image ghcr.io/jpshackelford/once-campfire:bot-read-messages
+```
+
+To switch back to the official image (without conversation context):
+
+```bash
+once update campfire.localhost --image ghcr.io/basecamp/once-campfire
+# Also set context_messages: 0 in your config to avoid 404 warnings
+```
+
+### When the PR is Merged
+
+Once [PR #190](https://github.com/basecamp/once-campfire/pull/190) is merged upstream, you can switch to the official image and conversation context will work automatically.
 
 ## Why "OpenPaws"?
 
