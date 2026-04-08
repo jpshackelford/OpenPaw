@@ -177,19 +177,68 @@ def install_once_cli() -> None:
         sys.exit(1)
 
 
+CAMPFIRE_IMAGE = "ghcr.io/basecamp/once-campfire"
+
+
+def check_hostname_resolves(hostname: str) -> bool:
+    """Check if a hostname resolves to an IP address."""
+    import socket
+
+    try:
+        socket.gethostbyname(hostname)
+        return True
+    except socket.gaierror:
+        return False
+
+
+def ensure_hosts_entry(hostname: str) -> None:
+    """Ensure the hostname resolves, suggesting /etc/hosts entry if needed."""
+    if check_hostname_resolves(hostname):
+        log_success(f"Hostname {hostname} resolves correctly")
+        return
+
+    log_warn(f"Hostname {hostname} does not resolve")
+    log_info("For local development, add this line to /etc/hosts:")
+    print(f"    127.0.0.1 {hostname}")
+    log_info(f"Run: echo '127.0.0.1 {hostname}' | sudo tee -a /etc/hosts")
+
+    # Try to add it automatically (will fail without sudo password)
+    result = run_command(
+        ["grep", "-q", hostname, "/etc/hosts"], check=False, capture=True
+    )
+    if result.returncode != 0:
+        log_info("Attempting to add hosts entry (may require password)...")
+        add_result = subprocess.run(
+            f"echo '127.0.0.1 {hostname}' | sudo tee -a /etc/hosts",
+            shell=True,
+            capture_output=True,
+            text=True,
+        )
+        if add_result.returncode == 0:
+            log_success(f"Added {hostname} to /etc/hosts")
+        else:
+            log_warn("Could not add hosts entry automatically")
+            log_info("Please add the entry manually and re-run this script")
+
+
 def deploy_campfire(hostname: str, disable_tls: bool) -> None:
     """Deploy Campfire using ONCE CLI."""
     log_info("Deploying Campfire...")
 
     # Check if already deployed
     result = run_command(["once", "list"], check=False, capture=True)
-    if result.returncode == 0 and "campfire" in result.stdout:
+    if result.returncode == 0 and "campfire" in result.stdout.lower():
         log_warn("Campfire appears to already be deployed")
         log_info("Use 'once' command to manage existing installation")
         return
 
-    # Build deploy command
-    cmd = ["once", "deploy", "campfire", "--host", hostname]
+    # For local development, ensure hostname resolves
+    if hostname.endswith(".localhost") or hostname == "localhost":
+        ensure_hosts_entry(hostname)
+
+    # Build deploy command with full image path
+    # The ONCE CLI requires the full ghcr.io path for the Campfire image
+    cmd = ["once", "deploy", CAMPFIRE_IMAGE, "--host", hostname]
     if disable_tls:
         cmd.append("--disable-tls")
 
