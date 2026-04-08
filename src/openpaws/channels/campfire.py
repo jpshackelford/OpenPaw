@@ -200,6 +200,7 @@ class CampfireAdapter(ChannelAdapter):
                 )
                 full_message = f"{context_text}{incoming.text}"
                 # Create a new IncomingMessage with the contextualized text
+                # Important: Copy the callbacks from the original message!
                 incoming_with_context = IncomingMessage(
                     channel_type=incoming.channel_type,
                     channel_id=incoming.channel_id,
@@ -210,6 +211,8 @@ class CampfireAdapter(ChannelAdapter):
                     is_mention=incoming.is_mention,
                     is_dm=incoming.is_dm,
                     raw_event=incoming.raw_event,
+                    on_processing_start=incoming.on_processing_start,
+                    send_status=incoming.send_status,
                 )
                 response = await self._message_handler(incoming_with_context)
             else:

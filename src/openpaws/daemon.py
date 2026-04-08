@@ -429,10 +429,14 @@ class Daemon:
 
         # Signal that we're starting to process (e.g., add 👀 reaction)
         if message.on_processing_start:
+            logger.debug("Calling on_processing_start callback")
             try:
                 await message.on_processing_start()
+                logger.debug("on_processing_start callback completed")
             except Exception as e:
                 logger.warning(f"Failed to signal processing start: {e}")
+        else:
+            logger.debug("No on_processing_start callback set")
 
         # Run the conversation, passing the send_status callback so the agent
         # can send interim messages if needed

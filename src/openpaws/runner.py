@@ -20,7 +20,11 @@ from openhands.tools.terminal import TerminalTool
 from pydantic import SecretStr
 
 from openpaws.config import Config, GroupConfig
-from openpaws.tools.send_status import SendStatusTool
+from openpaws.tools import (
+    SendStatusTool,
+    register_send_callback,
+    unregister_send_callback,
+)
 
 if TYPE_CHECKING:
     from openpaws.scheduler import ScheduledTask
@@ -114,13 +118,10 @@ class ConversationRunner:
             self._llm = self._create_llm()
         return self._llm
 
-    def get_agent(self, send_callback: SendCallback | None = None) -> Agent:
-        """Get an Agent instance, optionally with a send_callback for status messages.
-
-        Note: Unlike `llm`, this is not cached because different conversations
-        may need different tools (e.g., different send_callback for different channels).
-        """
-        return self._create_agent(send_callback)
+    @property
+    def agent(self) -> Agent:
+        """Get the Agent instance (created fresh each time for stateless operation)."""
+        return self._create_agent()
 
     def _get_model(self) -> str:
         """Get the model to use, checking LLM_MODEL env var first."""
@@ -177,45 +178,27 @@ class ConversationRunner:
         """Create an LLM instance from configuration."""
         return LLM(**self._build_llm_kwargs())
 
-    def _get_default_tools(
-        self, send_callback: SendCallback | None = None
-    ) -> list[Tool]:
+    def _get_default_tools(self) -> list[Tool]:
         """Get the default tool specifications for OpenPaws (CLI mode, no browser).
 
-        Args:
-            send_callback: Optional callback for sending status messages to channel.
+        Always includes SendStatusTool - it will look up the callback from the
+        registry at runtime based on conversation ID.
         """
-        tools = [
+        return [
             Tool(name=TerminalTool.name),
             Tool(name=FileEditorTool.name),
             Tool(name=TaskTrackerTool.name),
             Tool(name=DelegateTool.name),
+            Tool(name=SendStatusTool.name),
         ]
 
-        # Add SendStatusTool if callback is provided
-        if send_callback:
-            tools.append(
-                Tool(
-                    name=SendStatusTool.name,
-                    params={"send_callback": send_callback},
-                )
-            )
-
-        return tools
-
-    def _create_agent(
-        self, send_callback: SendCallback | None = None
-    ) -> Agent:
-        """Create an Agent instance with default tools.
-
-        Args:
-            send_callback: Optional callback for sending status messages.
-        """
+    def _create_agent(self) -> Agent:
+        """Create an Agent instance with default tools."""
         agent_config = self.config.agent
 
         agent_kwargs: dict[str, Any] = {
             "llm": self.llm,
-            "tools": self._get_default_tools(send_callback),
+            "tools": self._get_default_tools(),
             "condenser": get_default_condenser(
                 llm=self.llm.model_copy(update={"usage_id": "condenser"})
             ),
@@ -266,11 +249,10 @@ class ConversationRunner:
         group: GroupConfig,
         conversation_id: UUID | None,
         callbacks: list,
-        send_callback: SendCallback | None = None,
     ) -> Conversation:
         """Create a Conversation instance for a group."""
         return Conversation(
-            agent=self.get_agent(send_callback),
+            agent=self.agent,
             workspace=self._get_group_workspace(group),
             persistence_dir=self._get_group_persistence_dir(group),
             conversation_id=conversation_id,
@@ -322,13 +304,21 @@ class ConversationRunner:
 
         events: list[Event] = []
         all_callbacks = self._build_callbacks(events, callbacks)
+        conv = None
         try:
-            conv = self._create_conversation(
-                group, conversation_id, all_callbacks, send_callback
-            )
+            conv = self._create_conversation(group, conversation_id, all_callbacks)
+
+            # Register the send callback in the registry so SendStatusTool can find it
+            if send_callback:
+                register_send_callback(str(conv.state.id), send_callback)
+
             return self._run_conversation(conv, prompt, events)
         except Exception as e:
             return self._conversation_error(e, events)
+        finally:
+            # Always unregister the callback to prevent memory leaks
+            if conv:
+                unregister_send_callback(str(conv.state.id))
 
     def _group_not_found_result(self, group_name: str) -> ConversationResult:
         """Return a failure result for unknown group."""

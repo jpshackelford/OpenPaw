@@ -25,6 +25,26 @@ if TYPE_CHECKING:
 # Type for the callback that sends messages
 SendCallback = Callable[[str], Awaitable[None]]
 
+# Registry to store callbacks by conversation ID
+# This is necessary because Tool params must be JSON-serializable,
+# but callbacks are not. We store the callback here and look it up by ID.
+_callback_registry: dict[str, SendCallback] = {}
+
+
+def register_send_callback(conversation_id: str, callback: SendCallback) -> None:
+    """Register a send callback for a conversation."""
+    _callback_registry[conversation_id] = callback
+
+
+def unregister_send_callback(conversation_id: str) -> None:
+    """Unregister a send callback for a conversation."""
+    _callback_registry.pop(conversation_id, None)
+
+
+def get_send_callback(conversation_id: str) -> SendCallback | None:
+    """Get the send callback for a conversation."""
+    return _callback_registry.get(conversation_id)
+
 
 class SendStatusAction(Action):
     """Action for sending a status message to the user."""
@@ -89,17 +109,20 @@ Keep status messages brief and friendly."""
 
 
 class SendStatusExecutor(ToolExecutor):
-    """Executor that sends status messages via the provided callback."""
-
-    def __init__(self, send_callback: SendCallback | None = None):
-        self._send_callback = send_callback
+    """Executor that sends status messages via callback looked up from registry."""
 
     def __call__(
         self,
         action: SendStatusAction,
-        conversation: "BaseConversation | None" = None,  # noqa: ARG002
+        conversation: "BaseConversation | None" = None,
     ) -> SendStatusObservation:
-        if self._send_callback is None:
+        # Look up the callback from the registry using conversation ID
+        send_callback = None
+        if conversation and hasattr(conversation, "state"):
+            conv_id = str(conversation.state.id)
+            send_callback = get_send_callback(conv_id)
+
+        if send_callback is None:
             # No callback configured - just acknowledge
             return SendStatusObservation.from_text(
                 text="Status message logged (no channel configured).",
@@ -113,11 +136,11 @@ class SendStatusExecutor(ToolExecutor):
         try:
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 pool.submit(
-                    asyncio.run, self._send_callback(action.message)
+                    asyncio.run, send_callback(action.message)
                 ).result()
         except Exception:
             # Fallback: try running directly if thread pool fails
-            asyncio.run(self._send_callback(action.message))
+            asyncio.run(send_callback(action.message))
 
         return SendStatusObservation.from_text(
             text="Status message sent to user.",
@@ -132,14 +155,13 @@ class SendStatusTool(ToolDefinition[SendStatusAction, SendStatusObservation]):
     def create(
         cls,
         conv_state: "ConversationState | None" = None,  # noqa: ARG003
-        send_callback: SendCallback | None = None,
         **params,
     ) -> Sequence[Self]:
         """Create SendStatusTool instance.
 
         Args:
-            conv_state: Optional conversation state (not used).
-            send_callback: Async callback to send messages to the channel.
+            conv_state: Optional conversation state (not used directly, but the
+                executor will look up callbacks by conversation ID at runtime).
             **params: Additional parameters (none supported).
 
         Returns:
@@ -155,7 +177,7 @@ class SendStatusTool(ToolDefinition[SendStatusAction, SendStatusObservation]):
                 description=SEND_STATUS_DESCRIPTION,
                 action_type=SendStatusAction,
                 observation_type=SendStatusObservation,
-                executor=SendStatusExecutor(send_callback),
+                executor=SendStatusExecutor(),
                 annotations=ToolAnnotations(
                     readOnlyHint=False,  # It does send messages
                     destructiveHint=False,  # Not destructive
