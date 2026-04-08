@@ -63,20 +63,23 @@ For a complete installation of Campfire (self-hosted chat) with OpenPaws:
 
 ```bash
 # Full installation (Campfire + OpenPaws)
-./scripts/setup-campfire-openpaw.sh --disable-tls
+python scripts/setup_campfire_openpaw.py --disable-tls
 
 # OpenPaws only (if Campfire is already running)
-./scripts/setup-campfire-openpaw.sh --skip-campfire
+python scripts/setup_campfire_openpaw.py --skip-campfire
 
 # Custom hostname for production
-./scripts/setup-campfire-openpaw.sh --hostname chat.example.com
+python scripts/setup_campfire_openpaw.py --hostname chat.example.com
 ```
 
 The script:
 1. Installs ONCE CLI (for managing Campfire)
 2. Deploys Campfire via `once deploy campfire --host <hostname>`
 3. Installs OpenPaws from the current branch using `uv tool install`
-4. Generates initial `~/.openpaws/config.yaml` for Campfire integration
+4. Configures `~/.openpaws/config.yaml` for Campfire (merges with existing config)
+
+The script is fully idempotent - safe to run multiple times. It merges Campfire
+settings into existing configs, preserving other channels (Slack, Gmail, etc.).
 
 See `docs/CAMPFIRE_SETUP.md` for detailed configuration instructions.
 
@@ -99,10 +102,10 @@ src/openpaws/
     └── slack.py     # Slack adapter (Socket Mode)
 
 scripts/
-├── check_coverage.py        # Coverage reporting helper
-├── check_function_length.py # Function length checker
-├── quality_report.py        # Quality metrics report
-└── setup-campfire-openpaw.sh # Campfire + OpenPaws installation script
+├── check_coverage.py          # Coverage reporting helper
+├── check_function_length.py   # Function length checker
+├── quality_report.py          # Quality metrics report
+└── setup_campfire_openpaw.py  # Campfire + OpenPaws installation script
 
 tests/
 ├── conftest.py              # Pytest config, subprocess coverage setup
