@@ -279,7 +279,11 @@ def install_once_cli() -> None:
         sys.exit(1)
 
 
-CAMPFIRE_IMAGE = "ghcr.io/basecamp/once-campfire"
+# Default Campfire image - use fork with bot read API until PR is merged
+# PR: https://github.com/basecamp/once-campfire/pull/190
+# Once merged, switch back to: ghcr.io/basecamp/once-campfire
+CAMPFIRE_IMAGE_DEFAULT = "ghcr.io/jpshackelford/once-campfire:bot-read-messages"
+CAMPFIRE_IMAGE_OFFICIAL = "ghcr.io/basecamp/once-campfire"
 
 
 def check_hostname_resolves(hostname: str) -> bool:
@@ -339,7 +343,7 @@ def ensure_hosts_entry(hostname: str) -> bool:
         return False
 
 
-def deploy_campfire(hostname: str, disable_tls: bool) -> None:
+def deploy_campfire(hostname: str, disable_tls: bool, campfire_image: str) -> None:
     """Deploy Campfire using ONCE CLI."""
     log_info("Deploying Campfire...")
 
@@ -354,7 +358,7 @@ def deploy_campfire(hostname: str, disable_tls: bool) -> None:
 
     # Build deploy command with full image path
     # The ONCE CLI requires the full ghcr.io path for the Campfire image
-    cmd = ["once", "deploy", CAMPFIRE_IMAGE, "--host", hostname]
+    cmd = ["once", "deploy", campfire_image, "--host", hostname]
     if disable_tls:
         cmd.append("--disable-tls")
 
@@ -733,8 +737,21 @@ Examples:
         action="store_true",
         help="Skip the interactive bot setup wizard",
     )
+    parser.add_argument(
+        "--campfire-image",
+        default=CAMPFIRE_IMAGE_DEFAULT,
+        help=f"Docker image for Campfire (default: {CAMPFIRE_IMAGE_DEFAULT})",
+    )
+    parser.add_argument(
+        "--use-official-campfire",
+        action="store_true",
+        help=f"Use official Campfire image ({CAMPFIRE_IMAGE_OFFICIAL}) instead of fork",
+    )
 
     args = parser.parse_args()
+
+    # Resolve campfire image
+    campfire_image = CAMPFIRE_IMAGE_OFFICIAL if args.use_official_campfire else args.campfire_image
 
     print()
     print(f"{BLUE}╔═══════════════════════════════════════════════════════════════╗{NC}")
@@ -744,6 +761,7 @@ Examples:
 
     log_info("Configuration:")
     log_info(f"  Campfire hostname: {args.hostname}")
+    log_info(f"  Campfire image: {campfire_image}")
     log_info(f"  TLS disabled: {args.disable_tls}")
     log_info(f"  OpenPaws branch: {args.openpaws_branch}")
     log_info(f"  Skip Campfire: {args.skip_campfire}")
@@ -759,7 +777,7 @@ Examples:
     # Campfire installation
     if not args.skip_campfire:
         install_once_cli()
-        deploy_campfire(args.hostname, args.disable_tls)
+        deploy_campfire(args.hostname, args.disable_tls, campfire_image)
 
     # OpenPaws installation
     if not args.skip_openpaws:
