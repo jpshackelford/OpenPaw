@@ -316,8 +316,9 @@ class CampfireAdapter(ChannelAdapter):
                 if resp.status == 200:
                     data = await resp.json()
                     messages = data.get("messages", [])
-                    # Limit to configured number and reverse to chronological order
-                    limited = messages[: self._config.context_messages]
+                    # API returns newest-first; take the last N (most recent before
+                    # the target message) and reverse to chronological order
+                    limited = messages[-self._config.context_messages :]
                     return list(reversed(limited))
                 elif resp.status == 404:
                     logger.warning(
