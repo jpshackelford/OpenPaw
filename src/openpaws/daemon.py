@@ -31,6 +31,7 @@ from openpaws.channels.campfire import CampfireAdapter, CampfireConfig
 from openpaws.channels.gmail import GmailAdapter, GmailConfig
 from openpaws.channels.slack import SlackAdapter, SlackConfig
 from openpaws.config import Config, load_config
+from openpaws.runner import ConversationRunner
 from openpaws.scheduler import Scheduler
 from openpaws.storage import Storage
 
@@ -317,6 +318,7 @@ class Daemon:
         self.state: DaemonState | None = None
         self._shutdown_event: asyncio.Event | None = None
         self._channel_adapters: list[ChannelAdapter] = []
+        self._runner: ConversationRunner | None = None
 
     def _setup_signal_handlers(self) -> None:
         """Setup signal handlers for graceful shutdown."""
@@ -333,8 +335,9 @@ class Daemon:
     async def _execute_task(self, task) -> str:
         """Execute a scheduled task."""
         logger.info(f"Executing task: {task.config.name}")
-        # TODO: Integrate with software-agent-sdk conversation
-        # For now, just log and return
+        if self._runner:
+            result = await self._runner.run_task(task)
+            return result.message
         return f"Task '{task.config.name}' executed at {datetime.now()}"
 
     def _load_config(self) -> None:
@@ -351,6 +354,11 @@ class Daemon:
         self.storage = Storage()
         logger.info(f"Storage initialized: {self.storage.db_path}")
 
+    def _setup_runner(self) -> None:
+        """Initialize the conversation runner."""
+        self._runner = ConversationRunner(self.config)
+        logger.info("Conversation runner initialized")
+
     def _setup_scheduler(self) -> None:
         """Initialize scheduler with configured tasks."""
         self.scheduler = Scheduler(storage=self.storage)
@@ -358,15 +366,51 @@ class Daemon:
             self.scheduler.add_task(task_config)
             logger.info(f"Scheduled task: {task_config.name}")
 
+    def _find_group_for_message(self, message: IncomingMessage) -> str | None:
+        """Find the group name that matches the incoming message."""
+        for name, group in self.config.groups.items():
+            if (
+                group.channel == message.channel_type
+                and group.chat_id == message.channel_id
+            ):
+                return name
+        return None
+
     async def _handle_message(self, message: IncomingMessage) -> str | None:
         """Handle incoming messages from channel adapters."""
         logger.info(
             f"Message from {message.channel_type}:{message.channel_id} "
             f"user={message.user_id}: {message.text[:50]}..."
         )
-        # TODO: Integrate with software-agent-sdk conversation
-        # For now, just acknowledge
-        return f"Received: {message.text[:100]}"
+
+        if not self._runner:
+            logger.error("Conversation runner not initialized")
+            return "Error: Bot not fully initialized"
+
+        # Find the group for this message
+        group_name = self._find_group_for_message(message)
+        if not group_name:
+            logger.warning(
+                f"No group configured for {message.channel_type}:{message.channel_id}"
+            )
+            return None
+
+        # Run the conversation
+        try:
+            result = await self._runner.run_message(
+                group_name=group_name,
+                message=message.text,
+                sender=message.user_name,
+            )
+            if result.success:
+                logger.info(f"Response generated for {group_name}")
+                return result.message
+            else:
+                logger.error(f"Conversation failed: {result.error}")
+                return f"Sorry, I encountered an error: {result.error}"
+        except Exception as e:
+            logger.exception(f"Error handling message: {e}")
+            return f"Sorry, something went wrong: {e}"
 
     def _create_slack_adapter(self, channel_config) -> SlackAdapter | None:
         """Create a Slack adapter from channel config."""
@@ -487,6 +531,7 @@ class Daemon:
         )
         self._load_config()
         self._setup_storage()
+        self._setup_runner()
         self._setup_scheduler()
         self._setup_channel_adapters()
 

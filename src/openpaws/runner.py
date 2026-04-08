@@ -72,16 +72,51 @@ class ConversationRunner:
             self._agent = self._create_agent()
         return self._agent
 
+    def _get_model(self) -> str:
+        """Get the model to use, checking LLM_MODEL env var first."""
+        return os.environ.get("LLM_MODEL") or self.config.agent.model
+
+    def _get_base_url(self) -> str | None:
+        """Get the base URL, checking LLM_BASE_URL env var first."""
+        return os.environ.get("LLM_BASE_URL") or self.config.agent.llm_proxy
+
+    def _get_api_key(self, model: str) -> str | None:
+        """Get the appropriate API key for a model.
+
+        Priority:
+        1. LLM_API_KEY (generic, works with any proxy)
+        2. Provider-specific keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
+        """
+        # Check generic key first (useful with LiteLLM proxy)
+        generic_key = os.environ.get("LLM_API_KEY")
+        if generic_key:
+            return generic_key
+
+        # Fall back to provider-specific keys
+        model_lower = model.lower()
+        if model_lower.startswith("anthropic/") or "claude" in model_lower:
+            return os.environ.get("ANTHROPIC_API_KEY")
+        elif model_lower.startswith("openai/") or "gpt" in model_lower:
+            return os.environ.get("OPENAI_API_KEY")
+        elif model_lower.startswith("gemini/") or model_lower.startswith("google/"):
+            return os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+
+        return None
+
     def _build_llm_kwargs(self) -> dict[str, Any]:
         """Build kwargs dict for LLM constructor."""
         agent_config = self.config.agent
-        kwargs: dict[str, Any] = {"model": agent_config.model}
+        model = self._get_model()
+        kwargs: dict[str, Any] = {"model": model}
 
-        api_key = self._get_api_key_for_model(agent_config.model)
+        api_key = self._get_api_key(model)
         if api_key:
             kwargs["api_key"] = SecretStr(api_key)
-        if agent_config.llm_proxy:
-            kwargs["base_url"] = agent_config.llm_proxy
+
+        base_url = self._get_base_url()
+        if base_url:
+            kwargs["base_url"] = base_url
+
         if agent_config.temperature is not None:
             kwargs["temperature"] = agent_config.temperature
         if agent_config.max_tokens is not None:
@@ -91,24 +126,6 @@ class ConversationRunner:
     def _create_llm(self) -> LLM:
         """Create an LLM instance from configuration."""
         return LLM(**self._build_llm_kwargs())
-
-    def _get_api_key_for_model(self, model: str) -> str | None:
-        """Get the appropriate API key for a model.
-
-        Checks environment variables based on model provider prefix.
-        """
-        model_lower = model.lower()
-
-        # Check for provider-specific keys
-        if model_lower.startswith("anthropic/") or "claude" in model_lower:
-            return os.environ.get("ANTHROPIC_API_KEY")
-        elif model_lower.startswith("openai/") or "gpt" in model_lower:
-            return os.environ.get("OPENAI_API_KEY")
-        elif model_lower.startswith("gemini/") or model_lower.startswith("google/"):
-            return os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
-
-        # Fallback to generic key (useful with LiteLLM proxy)
-        return os.environ.get("LLM_API_KEY")
 
     def _create_agent(self) -> Agent:
         """Create an Agent instance."""
@@ -237,11 +254,25 @@ class ConversationRunner:
     def _extract_final_response(self, events: list[Event]) -> str:
         """Extract the final agent response from events.
 
-        Looks for the last assistant message or finish event.
+        Looks for FinishAction (tool call) or assistant message.
         """
-        from openhands.sdk.event.message import MessageEvent
+        from openhands.sdk.event import ActionEvent, MessageEvent
 
         for event in reversed(events):
-            if isinstance(event, MessageEvent) and event.role == "assistant":
-                return event.content
+            # Check for FinishAction (agent used finish tool)
+            if isinstance(event, ActionEvent):
+                action = getattr(event, "action", None)
+                if action and getattr(action, "kind", None) == "FinishAction":
+                    message = getattr(action, "message", None)
+                    if message:
+                        return message
+
+            # Check for direct assistant message
+            if isinstance(event, MessageEvent):
+                msg = event.llm_message
+                if msg.role == "assistant" and msg.content:
+                    texts = [c.text for c in msg.content if hasattr(c, "text")]
+                    if texts:
+                        return "\n".join(texts)
+
         return "No response generated"

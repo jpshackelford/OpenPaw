@@ -129,7 +129,11 @@ class CampfireAdapter(ChannelAdapter):
         )
 
     async def _handle_webhook(self, request: web.Request) -> web.Response:
-        """Handle incoming webhook POST from Campfire."""
+        """Handle incoming webhook POST from Campfire.
+
+        Acknowledges immediately and processes the message in the background.
+        Response is sent back to Campfire via the API when ready.
+        """
         if self._message_handler is None:
             return web.Response(status=503, text="Handler not ready")
 
@@ -144,16 +148,34 @@ class CampfireAdapter(ChannelAdapter):
             f"Received message from {incoming.user_name} in room {incoming.channel_id}"
         )
 
+        # Process message in background - don't block the webhook response
+        asyncio.create_task(self._process_message_async(incoming))
+
+        # Acknowledge receipt immediately (204 No Content - no body for Campfire)
+        return web.Response(status=204)
+
+    async def _process_message_async(self, incoming: IncomingMessage) -> None:
+        """Process message asynchronously and send response back to Campfire."""
         try:
             response = await self._message_handler(incoming)
+            if response:
+                outgoing = OutgoingMessage(
+                    channel_id=incoming.channel_id,
+                    text=response,
+                    thread_id=incoming.thread_id,
+                )
+                await self.send_message(outgoing)
         except Exception as e:
-            logger.error(f"Message handler error: {e}")
-            return web.Response(status=500, text="Handler error")
-
-        if response:
-            return web.Response(text=response, content_type="text/plain")
-
-        return web.Response(status=204)
+            logger.exception(f"Error processing message: {e}")
+            # Try to send error message back to Campfire
+            try:
+                error_msg = OutgoingMessage(
+                    channel_id=incoming.channel_id,
+                    text=f"Sorry, I encountered an error: {e}",
+                )
+                await self.send_message(error_msg)
+            except Exception:
+                logger.exception("Failed to send error message to Campfire")
 
     async def _health_check(self, request: web.Request) -> web.Response:
         """Simple health check endpoint."""
