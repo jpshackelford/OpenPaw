@@ -27,6 +27,7 @@ from datetime import datetime
 from pathlib import Path
 
 from openpaws.channels.base import ChannelAdapter, IncomingMessage
+from openpaws.channels.campfire import CampfireAdapter, CampfireConfig
 from openpaws.channels.gmail import GmailAdapter, GmailConfig
 from openpaws.channels.slack import SlackAdapter, SlackConfig
 from openpaws.config import Config, load_config
@@ -404,6 +405,26 @@ class Daemon:
             logger.error(f"Invalid Gmail config: {e}")
             return None
 
+    def _create_campfire_adapter(self, channel_config) -> CampfireAdapter | None:
+        """Create a Campfire adapter from channel config."""
+        if not channel_config.base_url:
+            logger.warning("Campfire channel missing base_url, skipping")
+            return None
+        if not channel_config.bot_key:
+            logger.warning("Campfire channel missing bot_key, skipping")
+            return None
+        try:
+            config = CampfireConfig(
+                base_url=channel_config.base_url,
+                bot_key=channel_config.bot_key,
+                webhook_port=channel_config.webhook_port,
+                webhook_path=channel_config.webhook_path,
+            )
+            return CampfireAdapter(config)
+        except ValueError as e:
+            logger.error(f"Invalid Campfire config: {e}")
+            return None
+
     def _setup_channel_adapters(self) -> None:
         """Initialize channel adapters from configuration."""
         self._channel_adapters = []
@@ -419,6 +440,11 @@ class Daemon:
                 if adapter:
                     self._channel_adapters.append(adapter)
                     logger.info(f"Configured Gmail channel: {name}")
+            elif channel_config.type == "campfire":
+                adapter = self._create_campfire_adapter(channel_config)
+                if adapter:
+                    self._channel_adapters.append(adapter)
+                    logger.info(f"Configured Campfire channel: {name}")
             else:
                 logger.debug(f"Skipping channel type: {channel_config.type}")
 

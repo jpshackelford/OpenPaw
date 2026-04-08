@@ -9,7 +9,7 @@ import yaml
 
 @dataclass
 class ChannelConfig:
-    """Configuration for a channel (Telegram, Slack, Gmail, etc.)."""
+    """Configuration for a channel (Telegram, Slack, Gmail, Campfire, etc.)."""
 
     type: str
     # Slack/Telegram tokens
@@ -21,6 +21,11 @@ class ChannelConfig:
     mode: str | None = None  # "channel" or "tool" for Gmail
     poll_interval: int = 60  # seconds, for Gmail polling
     filter_label: str | None = None  # Gmail label filter
+    # Campfire-specific settings
+    base_url: str | None = None  # Campfire server URL
+    bot_key: str | None = None  # Campfire bot key (format: id-token)
+    webhook_port: int = 8765  # Local port for webhook server
+    webhook_path: str = "/webhook"  # Path for webhook endpoint
 
 
 @dataclass
@@ -148,7 +153,8 @@ def _validate_task_schedule(name: str, cfg: dict) -> None:
 def _parse_tasks(raw: dict) -> dict[str, TaskConfig]:
     """Parse task configurations from raw YAML data."""
     tasks = {}
-    for name, cfg in raw.get("tasks", {}).items():
+    raw_tasks = raw.get("tasks") or {}
+    for name, cfg in raw_tasks.items():
         _validate_task_schedule(name, cfg)
 
         # Parse interval if present
