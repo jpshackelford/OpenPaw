@@ -74,16 +74,103 @@ def command_exists(cmd: str) -> bool:
     return shutil.which(cmd) is not None
 
 
-def install_pyyaml() -> None:
-    """Install PyYAML using pip or uv."""
+def install_pyyaml() -> bool:
+    """Install PyYAML using pip to the current Python environment.
+
+    Returns True if PyYAML is now available, False otherwise.
+    """
     try:
-        if command_exists("uv"):
-            subprocess.run(["uv", "pip", "install", "pyyaml"], check=True)
-        else:
-            subprocess.run([sys.executable, "-m", "pip", "install", "pyyaml"], check=True)
+        # Always install to the current Python interpreter's environment
+        # Using uv pip would install to a virtual env that we can't import from
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--quiet", "pyyaml"],
+            check=True,
+            capture_output=True,
+        )
         log_success("PyYAML installed successfully")
+        return True
     except subprocess.CalledProcessError:
         log_warn("Could not install PyYAML - config will be backed up, not merged")
+        return False
+
+
+def run_yaml_merge(config_file: Path, campfire_url: str) -> bool:
+    """Run YAML merge in a subprocess to ensure PyYAML is available.
+
+    This is needed because if we installed PyYAML after the script started,
+    it won't be importable in the current process without complex hacks.
+
+    Returns True if successful, False otherwise.
+    """
+    # Use raw string (r''') to avoid issues with escape sequences in the embedded script
+    # The embedded script uses print() with explicit newline characters
+    merge_script = r'''
+import sys
+import yaml
+
+config_path = sys.argv[1]
+campfire_url = sys.argv[2]
+
+with open(config_path) as f:
+    config = yaml.safe_load(f) or {}
+
+# Ensure channels section exists
+if "channels" not in config:
+    config["channels"] = {}
+
+# Add/update campfire channel (preserve existing bot_key if set)
+existing_campfire = config["channels"].get("campfire", {})
+existing_bot_key = existing_campfire.get("bot_key", "${CAMPFIRE_BOT_KEY}")
+
+config["channels"]["campfire"] = {
+    "base_url": campfire_url,
+    "bot_key": existing_bot_key,
+    "webhook_port": existing_campfire.get("webhook_port", 8765),
+    "webhook_path": existing_campfire.get("webhook_path", "/webhook"),
+}
+
+# Add a campfire group if no campfire groups exist
+if "groups" not in config:
+    config["groups"] = {}
+
+has_campfire_group = any(
+    g.get("channel") == "campfire"
+    for g in config.get("groups", {}).values()
+    if isinstance(g, dict)
+)
+
+if not has_campfire_group:
+    group_name = "campfire-main"
+    counter = 1
+    while group_name in config["groups"]:
+        group_name = f"campfire-main-{counter}"
+        counter += 1
+    config["groups"][group_name] = {
+        "channel": "campfire",
+        "chat_id": "1",
+        "trigger": "@paw",
+    }
+    print(f"Added group '{group_name}' for Campfire", file=sys.stderr)
+
+header = "# OpenPaws Configuration\n# See docs/CAMPFIRE_SETUP.md for Campfire setup instructions\n\n"
+with open(config_path, "w") as f:
+    f.write(header)
+    yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+'''
+
+    result = subprocess.run(
+        [sys.executable, "-c", merge_script, str(config_file), campfire_url],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode == 0:
+        if result.stderr:
+            log_info(result.stderr.strip())
+        return True
+    else:
+        log_error(f"YAML merge failed: {result.stderr}")
+        return False
 
 
 def detect_os() -> str:
@@ -226,12 +313,12 @@ def ensure_hosts_entry(hostname: str) -> bool:
         return False
 
     # Add the entry (requires sudo)
+    # Use shell command with echo to avoid terminal issues with sudo password prompt
+    # When using subprocess with input= and capture_output=, the terminal may have
+    # issues with sudo password input (e.g., Enter key not working)
     log_info("Adding hosts entry (may require password)...")
     add_result = subprocess.run(
-        ["sudo", "tee", "-a", "/etc/hosts"],
-        input=f"127.0.0.1 {hostname}\n",
-        capture_output=True,
-        text=True,
+        ["sudo", "sh", "-c", f"echo '127.0.0.1 {hostname}' >> /etc/hosts"],
     )
 
     if add_result.returncode == 0:
@@ -335,66 +422,23 @@ def configure_openpaws(hostname: str, disable_tls: bool) -> None:
 
 
 def merge_campfire_config(config_file: Path, campfire_url: str) -> None:
-    """Merge Campfire settings into existing config."""
+    """Merge Campfire settings into existing config.
+
+    Uses subprocess to run YAML operations, which ensures PyYAML is available
+    even if it was just installed and can't be imported in the current process.
+    """
     log_info("Existing config found, adding Campfire channel...")
 
-    try:
-        import yaml
-    except ImportError:
-        log_error("PyYAML not available for config merging")
-        log_info("Creating backup and generating new config instead")
-        backup = config_file.with_suffix(".yaml.bak")
-        shutil.copy(config_file, backup)
-        log_info(f"Backup saved to: {backup}")
-        create_new_config(config_file, campfire_url)
+    # Try subprocess merge first (works even if PyYAML was just installed)
+    if run_yaml_merge(config_file, campfire_url):
         return
 
-    with open(config_file) as f:
-        config = yaml.safe_load(f) or {}
-
-    # Ensure channels section exists
-    if "channels" not in config:
-        config["channels"] = {}
-
-    # Add/update campfire channel (preserve existing bot_key if set)
-    existing_campfire = config["channels"].get("campfire", {})
-    existing_bot_key = existing_campfire.get("bot_key", "${CAMPFIRE_BOT_KEY}")
-
-    config["channels"]["campfire"] = {
-        "base_url": campfire_url,
-        "bot_key": existing_bot_key,
-        "webhook_port": existing_campfire.get("webhook_port", 8765),
-        "webhook_path": existing_campfire.get("webhook_path", "/webhook"),
-    }
-
-    # Add a campfire group if no campfire groups exist
-    if "groups" not in config:
-        config["groups"] = {}
-
-    has_campfire_group = any(
-        g.get("channel") == "campfire"
-        for g in config.get("groups", {}).values()
-        if isinstance(g, dict)
-    )
-
-    if not has_campfire_group:
-        group_name = "campfire-main"
-        counter = 1
-        while group_name in config["groups"]:
-            group_name = f"campfire-main-{counter}"
-            counter += 1
-
-        config["groups"][group_name] = {
-            "channel": "campfire",
-            "chat_id": "1",
-            "trigger": "@paw",
-        }
-        log_info(f"Added group '{group_name}' for Campfire")
-
-    with open(config_file, "w") as f:
-        f.write("# OpenPaws Configuration\n")
-        f.write("# See docs/CAMPFIRE_SETUP.md for Campfire setup instructions\n\n")
-        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+    # Fallback: backup and create new config
+    log_warn("Could not merge config, creating backup and new config")
+    backup = config_file.with_suffix(".yaml.bak")
+    shutil.copy(config_file, backup)
+    log_info(f"Backup saved to: {backup}")
+    create_new_config(config_file, campfire_url)
 
 
 def create_new_config(config_file: Path, campfire_url: str) -> None:
@@ -542,14 +586,23 @@ def check_prerequisites(
             log_warn("uv not found (will be installed automatically)")
 
     # PyYAML (needed for config merging if config exists)
+    # Note: We use subprocess for YAML operations, so install it now but don't
+    # require it to be importable in this process
     config_file = Path.home() / ".openpaws" / "config.yaml"
     if config_file.exists():
-        try:
-            import yaml  # noqa: F401
+        # Check if PyYAML is available in a subprocess
+        result = subprocess.run(
+            [sys.executable, "-c", "import yaml"],
+            capture_output=True,
+        )
+        if result.returncode == 0:
             log_success("PyYAML available (for config merging)")
-        except ImportError:
+        else:
             log_info("Installing PyYAML for config merging...")
-            install_pyyaml()
+            if install_pyyaml():
+                log_success("PyYAML installed (will be used via subprocess)")
+            else:
+                log_warn("PyYAML not available - existing config will be backed up")
 
     # Hostname resolution for .localhost domains (requires /etc/hosts entry)
     if not skip_campfire and (
