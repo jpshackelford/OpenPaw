@@ -57,6 +57,29 @@ openpaws --help
 openpaws status
 ```
 
+## Campfire + OpenPaws Setup
+
+For a complete installation of Campfire (self-hosted chat) with OpenPaws:
+
+```bash
+# Full installation (Campfire + OpenPaws)
+./scripts/setup-campfire-openpaw.sh --disable-tls
+
+# OpenPaws only (if Campfire is already running)
+./scripts/setup-campfire-openpaw.sh --skip-campfire
+
+# Custom hostname for production
+./scripts/setup-campfire-openpaw.sh --hostname chat.example.com
+```
+
+The script:
+1. Installs ONCE CLI (for managing Campfire)
+2. Deploys Campfire via `once deploy campfire --host <hostname>`
+3. Installs OpenPaws from the current branch using `uv tool install`
+4. Generates initial `~/.openpaws/config.yaml` for Campfire integration
+
+See `docs/CAMPFIRE_SETUP.md` for detailed configuration instructions.
+
 ## Project Structure
 
 ```
@@ -72,10 +95,18 @@ src/openpaws/
 └── channels/        # Chat platform adapters
     ├── __init__.py
     ├── base.py      # Abstract ChannelAdapter interface
+    ├── campfire.py  # Campfire adapter (webhook-based)
     └── slack.py     # Slack adapter (Socket Mode)
+
+scripts/
+├── check_coverage.py        # Coverage reporting helper
+├── check_function_length.py # Function length checker
+├── quality_report.py        # Quality metrics report
+└── setup-campfire-openpaw.sh # Campfire + OpenPaws installation script
 
 tests/
 ├── conftest.py              # Pytest config, subprocess coverage setup
+├── test_campfire_adapter.py # Campfire adapter tests
 ├── test_config.py           # Config parsing tests
 ├── test_daemon.py           # Unit tests for daemon module
 ├── test_daemon_integration.py  # Integration tests (real process start/stop)
