@@ -74,6 +74,18 @@ def command_exists(cmd: str) -> bool:
     return shutil.which(cmd) is not None
 
 
+def install_pyyaml() -> None:
+    """Install PyYAML using pip or uv."""
+    try:
+        if command_exists("uv"):
+            subprocess.run(["uv", "pip", "install", "pyyaml"], check=True)
+        else:
+            subprocess.run([sys.executable, "-m", "pip", "install", "pyyaml"], check=True)
+        log_success("PyYAML installed successfully")
+    except subprocess.CalledProcessError:
+        log_warn("Could not install PyYAML - config will be backed up, not merged")
+
+
 def detect_os() -> str:
     """Detect the operating system."""
     system = platform.system()
@@ -520,7 +532,8 @@ def check_prerequisites(skip_campfire: bool, skip_openpaws: bool) -> bool:
             import yaml  # noqa: F401
             log_success("PyYAML available (for config merging)")
         except ImportError:
-            log_warn("PyYAML not installed - existing config will be backed up, not merged")
+            log_info("Installing PyYAML for config merging...")
+            install_pyyaml()
 
     print()
     return all_ok
