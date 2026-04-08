@@ -74,36 +74,26 @@ def command_exists(cmd: str) -> bool:
     return shutil.which(cmd) is not None
 
 
-def install_pyyaml() -> bool:
-    """Install PyYAML using pip to the current Python environment.
-
-    Returns True if PyYAML is now available, False otherwise.
-    """
-    try:
-        # Always install to the current Python interpreter's environment
-        # Using uv pip would install to a virtual env that we can't import from
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--quiet", "pyyaml"],
-            check=True,
-            capture_output=True,
-        )
-        log_success("PyYAML installed successfully")
-        return True
-    except subprocess.CalledProcessError:
-        log_warn("Could not install PyYAML - config will be backed up, not merged")
+def check_pyyaml_available() -> bool:
+    """Check if PyYAML is available via uv run."""
+    if not command_exists("uv"):
         return False
+    result = subprocess.run(
+        ["uv", "run", "--with", "pyyaml", "python", "-c", "import yaml"],
+        capture_output=True,
+    )
+    return result.returncode == 0
 
 
 def run_yaml_merge(config_file: Path, campfire_url: str) -> bool:
-    """Run YAML merge in a subprocess to ensure PyYAML is available.
+    """Run YAML merge using uv to ensure PyYAML is available.
 
-    This is needed because if we installed PyYAML after the script started,
-    it won't be importable in the current process without complex hacks.
+    Uses 'uv run --with pyyaml' to execute in an environment where PyYAML
+    is guaranteed to be available, regardless of the current Python's packages.
 
     Returns True if successful, False otherwise.
     """
     # Use raw string (r''') to avoid issues with escape sequences in the embedded script
-    # The embedded script uses print() with explicit newline characters
     merge_script = r'''
 import sys
 import yaml
@@ -158,11 +148,24 @@ with open(config_path, "w") as f:
     yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 '''
 
-    result = subprocess.run(
-        [sys.executable, "-c", merge_script, str(config_file), campfire_url],
-        capture_output=True,
-        text=True,
-    )
+    # Use uv run --with pyyaml to ensure PyYAML is available
+    # This works regardless of the current Python's installed packages
+    if command_exists("uv"):
+        result = subprocess.run(
+            [
+                "uv", "run", "--with", "pyyaml",
+                "python", "-c", merge_script, str(config_file), campfire_url
+            ],
+            capture_output=True,
+            text=True,
+        )
+    else:
+        # Fallback to direct Python execution (may fail if PyYAML not installed)
+        result = subprocess.run(
+            [sys.executable, "-c", merge_script, str(config_file), campfire_url],
+            capture_output=True,
+            text=True,
+        )
 
     if result.returncode == 0:
         if result.stderr:
@@ -586,23 +589,15 @@ def check_prerequisites(
             log_warn("uv not found (will be installed automatically)")
 
     # PyYAML (needed for config merging if config exists)
-    # Note: We use subprocess for YAML operations, so install it now but don't
-    # require it to be importable in this process
+    # We use 'uv run --with pyyaml' to ensure it's available
     config_file = Path.home() / ".openpaws" / "config.yaml"
     if config_file.exists():
-        # Check if PyYAML is available in a subprocess
-        result = subprocess.run(
-            [sys.executable, "-c", "import yaml"],
-            capture_output=True,
-        )
-        if result.returncode == 0:
-            log_success("PyYAML available (for config merging)")
+        if check_pyyaml_available():
+            log_success("PyYAML available via uv (for config merging)")
+        elif command_exists("uv"):
+            log_warn("PyYAML check failed - config merge may fall back to backup")
         else:
-            log_info("Installing PyYAML for config merging...")
-            if install_pyyaml():
-                log_success("PyYAML installed (will be used via subprocess)")
-            else:
-                log_warn("PyYAML not available - existing config will be backed up")
+            log_warn("uv not available - existing config will be backed up")
 
     # Hostname resolution for .localhost domains (requires /etc/hosts entry)
     if not skip_campfire and (
