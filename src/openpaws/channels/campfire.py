@@ -23,7 +23,7 @@ Note: Reading conversation context requires the bot read API (PR #190).
 import asyncio
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from aiohttp import ClientSession, web
 
@@ -171,6 +171,9 @@ class CampfireAdapter(ChannelAdapter):
         so the agent can understand the conversation flow.
         """
         try:
+            # Acknowledge the message with 👀 reaction immediately
+            await self.add_reaction(incoming.channel_id, incoming.thread_id, "👀")
+
             # Fetch conversation context (messages before the current one)
             context_messages = await self.fetch_room_context(
                 incoming.channel_id, before_message_id=incoming.thread_id
@@ -318,13 +321,15 @@ class CampfireAdapter(ChannelAdapter):
                     return list(reversed(limited))
                 elif resp.status == 404:
                     logger.warning(
-                        f"Bot read API not available (404). "
-                        f"Ensure you're using a Campfire image with PR #190."
+                        "Bot read API not available (404). "
+                        "Ensure you're using a Campfire image with PR #190."
                     )
                     return []
                 else:
                     body = await resp.text()
-                    logger.error(f"Failed to fetch room context: {resp.status} - {body}")
+                    logger.error(
+                        f"Failed to fetch room context: {resp.status} - {body}"
+                    )
                     return []
         except Exception as e:
             logger.warning(f"Could not fetch room context: {e}")
@@ -360,7 +365,7 @@ class CampfireAdapter(ChannelAdapter):
             lines.append(f"**{name}**: {text}")
 
         lines.append("")
-        lines.append(f"---")
+        lines.append("---")
         lines.append(f"Now {current_user} says:")
         lines.append("")
 
@@ -385,6 +390,45 @@ class CampfireAdapter(ChannelAdapter):
                 body = await resp.text()
                 logger.error(f"Failed to send message: {resp.status} - {body}")
                 raise RuntimeError(f"Campfire API error: {resp.status}")
+
+    def _build_boost_url(self, room_id: str, message_id: str) -> str:
+        """Build URL for adding a reaction (boost) to a message."""
+        base = self._config.base_url.rstrip("/")
+        bot_key = self._config.bot_key
+        return f"{base}/rooms/{room_id}/{bot_key}/messages/{message_id}/boosts"
+
+    async def add_reaction(self, room_id: str, message_id: str, emoji: str) -> None:
+        """Add an emoji reaction (boost) to a message.
+
+        Args:
+            room_id: The room containing the message
+            message_id: The message to react to
+            emoji: The emoji to add (e.g., "👀")
+        """
+        if not self._http_session:
+            raise RuntimeError("Campfire adapter not started")
+
+        url = self._build_boost_url(room_id, message_id)
+
+        try:
+            async with self._http_session.post(
+                url,
+                data=emoji,
+                headers={"Content-Type": "text/plain; charset=utf-8"},
+            ) as resp:
+                if resp.status == 201:
+                    logger.debug(f"Added {emoji} reaction to message {message_id}")
+                elif resp.status == 404:
+                    logger.warning(
+                        f"Could not add reaction - message {message_id} not found "
+                        f"or bot boosts API not available"
+                    )
+                else:
+                    body = await resp.text()
+                    logger.warning(f"Failed to add reaction: {resp.status} - {body}")
+        except Exception as e:
+            # Don't fail message processing if reaction fails
+            logger.warning(f"Could not add reaction to message {message_id}: {e}")
 
     def is_running(self) -> bool:
         return self._running

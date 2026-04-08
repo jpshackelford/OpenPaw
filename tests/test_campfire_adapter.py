@@ -531,6 +531,109 @@ class TestCampfireAdapterSendMessage:
             await adapter.send_message(msg)
 
 
+class TestCampfireAdapterAddReaction:
+    """Tests for Campfire adapter add_reaction (boosts)."""
+
+    @pytest.fixture
+    def config(self):
+        """Create a valid config for testing."""
+        return CampfireConfig(
+            base_url="https://chat.example.com",
+            bot_key="123-abc",
+        )
+
+    def test_build_boost_url(self, config):
+        """Test building the boost URL."""
+        adapter = CampfireAdapter(config)
+        url = adapter._build_boost_url("42", "999")
+        assert url == "https://chat.example.com/rooms/42/123-abc/messages/999/boosts"
+
+    def test_build_boost_url_strips_trailing_slash(self, config):
+        """Test that trailing slash is stripped from base URL."""
+        config.base_url = "https://chat.example.com/"
+        adapter = CampfireAdapter(config)
+        url = adapter._build_boost_url("42", "999")
+        assert url == "https://chat.example.com/rooms/42/123-abc/messages/999/boosts"
+
+    @pytest.mark.asyncio
+    async def test_add_reaction_success(self, config):
+        """Test adding a reaction successfully."""
+        adapter = CampfireAdapter(config)
+
+        mock_response = AsyncMock()
+        mock_response.status = 201
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.post = MagicMock(return_value=mock_response)
+        adapter._http_session = mock_session
+
+        await adapter.add_reaction("42", "999", "👀")
+
+        mock_session.post.assert_called_once_with(
+            "https://chat.example.com/rooms/42/123-abc/messages/999/boosts",
+            data="👀",
+            headers={"Content-Type": "text/plain; charset=utf-8"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_add_reaction_404_does_not_raise(self, config):
+        """Test that 404 response logs warning but doesn't raise."""
+        adapter = CampfireAdapter(config)
+
+        mock_response = AsyncMock()
+        mock_response.status = 404
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.post = MagicMock(return_value=mock_response)
+        adapter._http_session = mock_session
+
+        # Should not raise, just log warning
+        await adapter.add_reaction("42", "999", "👀")
+
+    @pytest.mark.asyncio
+    async def test_add_reaction_error_does_not_raise(self, config):
+        """Test that API errors log warning but don't raise."""
+        adapter = CampfireAdapter(config)
+
+        mock_response = AsyncMock()
+        mock_response.status = 500
+        mock_response.text = AsyncMock(return_value="Internal Server Error")
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.post = MagicMock(return_value=mock_response)
+        adapter._http_session = mock_session
+
+        # Should not raise, just log warning
+        await adapter.add_reaction("42", "999", "👀")
+
+    @pytest.mark.asyncio
+    async def test_add_reaction_exception_does_not_raise(self, config):
+        """Test that network exceptions log warning but don't raise."""
+        adapter = CampfireAdapter(config)
+
+        mock_session = AsyncMock()
+        mock_session.post = MagicMock(side_effect=Exception("Network error"))
+        adapter._http_session = mock_session
+
+        # Should not raise, just log warning
+        await adapter.add_reaction("42", "999", "👀")
+
+    @pytest.mark.asyncio
+    async def test_add_reaction_not_started(self, config):
+        """Test adding reaction when adapter not started raises error."""
+        adapter = CampfireAdapter(config)
+        adapter._http_session = None
+
+        with pytest.raises(RuntimeError, match="Campfire adapter not started"):
+            await adapter.add_reaction("42", "999", "👀")
+
+
 class TestCampfireAdapterRoutes:
     """Tests for Campfire adapter route setup."""
 
