@@ -247,11 +247,17 @@ class TestCampfireAdapterWebhookHandler:
 
     @pytest.mark.asyncio
     async def test_handle_webhook_with_response(self, adapter):
-        """Test webhook handler returns response."""
+        """Test webhook handler acknowledges immediately with 204.
+
+        The webhook now returns 204 immediately and processes the message
+        in the background, sending responses via the Campfire API.
+        """
         async def handler(msg):
             return f"Response to: {msg.text}"
 
         adapter._message_handler = handler
+        # Mock fetch_room_context to avoid needing a real HTTP session
+        adapter.fetch_room_context = AsyncMock(return_value=[])
 
         request = AsyncMock()
         request.json = AsyncMock(
@@ -264,9 +270,8 @@ class TestCampfireAdapterWebhookHandler:
 
         response = await adapter._handle_webhook(request)
 
-        assert response.status == 200
-        assert response.text == "Response to: Hello"
-        assert response.content_type == "text/plain"
+        # Webhook always returns 204 No Content immediately
+        assert response.status == 204
 
     @pytest.mark.asyncio
     async def test_handle_webhook_no_response(self, adapter):
@@ -275,6 +280,8 @@ class TestCampfireAdapterWebhookHandler:
             return None
 
         adapter._message_handler = handler
+        # Mock fetch_room_context to avoid needing a real HTTP session
+        adapter.fetch_room_context = AsyncMock(return_value=[])
 
         request = AsyncMock()
         request.json = AsyncMock(
@@ -317,11 +324,17 @@ class TestCampfireAdapterWebhookHandler:
 
     @pytest.mark.asyncio
     async def test_handle_webhook_handler_error(self, adapter):
-        """Test webhook returns 500 on handler error."""
+        """Test webhook returns 204 even on handler error.
+
+        The webhook acknowledges immediately with 204. Handler errors
+        are processed asynchronously and logged, not returned in the response.
+        """
         async def handler(msg):
             raise RuntimeError("Handler failed")
 
         adapter._message_handler = handler
+        # Mock fetch_room_context to avoid needing a real HTTP session
+        adapter.fetch_room_context = AsyncMock(return_value=[])
 
         request = AsyncMock()
         request.json = AsyncMock(
@@ -334,7 +347,8 @@ class TestCampfireAdapterWebhookHandler:
 
         response = await adapter._handle_webhook(request)
 
-        assert response.status == 500
+        # Webhook still returns 204 - errors are handled asynchronously
+        assert response.status == 204
 
     @pytest.mark.asyncio
     async def test_health_check(self, adapter):
@@ -555,3 +569,135 @@ class TestCampfireAdapterRoutes:
 
         routes = [r.resource.canonical for r in app.router.routes()]
         assert "/health" in routes
+
+
+class TestCampfireAdapterContext:
+    """Tests for conversation context fetching."""
+
+    @pytest.fixture
+    def config(self):
+        return CampfireConfig(
+            base_url="https://chat.example.com",
+            bot_key="123-abc123xyz456",
+            context_messages=5,
+        )
+
+    @pytest.fixture
+    def adapter(self, config):
+        return CampfireAdapter(config)
+
+    def test_build_read_messages_url(self, adapter):
+        """Test building URL for reading messages."""
+        url = adapter._build_read_messages_url("42")
+        assert url == "https://chat.example.com/rooms/42/123-abc123xyz456/messages"
+
+    @pytest.mark.asyncio
+    async def test_fetch_room_context_success(self, adapter):
+        """Test fetching room context successfully."""
+        from aiohttp import ClientSession
+
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(
+            return_value={
+                "room": {"id": 1, "name": "General"},
+                "messages": [
+                    {
+                        "id": 10,
+                        "body": {"plain": "Hello"},
+                        "creator": {"id": 1, "name": "Alice", "is_bot": False},
+                    },
+                    {
+                        "id": 11,
+                        "body": {"plain": "Hi there"},
+                        "creator": {"id": 2, "name": "Bob", "is_bot": False},
+                    },
+                ],
+                "pagination": {},
+            }
+        )
+
+        # Create a proper async context manager mock
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__.return_value = mock_response
+        mock_cm.__aexit__.return_value = None
+
+        adapter._http_session = MagicMock(spec=ClientSession)
+        adapter._http_session.get.return_value = mock_cm
+
+        messages = await adapter.fetch_room_context("1")
+
+        # Messages should be reversed to chronological order
+        assert len(messages) == 2
+        assert messages[0]["body"]["plain"] == "Hi there"  # Reversed
+        assert messages[1]["body"]["plain"] == "Hello"
+
+    @pytest.mark.asyncio
+    async def test_fetch_room_context_404(self, adapter):
+        """Test fetch returns empty list on 404 (bot read API not available)."""
+        from aiohttp import ClientSession
+
+        mock_response = AsyncMock()
+        mock_response.status = 404
+
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__.return_value = mock_response
+        mock_cm.__aexit__.return_value = None
+
+        adapter._http_session = MagicMock(spec=ClientSession)
+        adapter._http_session.get.return_value = mock_cm
+
+        messages = await adapter.fetch_room_context("1")
+
+        assert messages == []
+
+    @pytest.mark.asyncio
+    async def test_fetch_room_context_disabled(self, adapter):
+        """Test fetch returns empty when context_messages is 0."""
+        adapter._config.context_messages = 0
+        adapter._http_session = AsyncMock()
+
+        messages = await adapter.fetch_room_context("1")
+
+        assert messages == []
+        # Should not have made any HTTP requests
+        adapter._http_session.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fetch_room_context_not_started(self, adapter):
+        """Test fetch raises when adapter not started."""
+        with pytest.raises(RuntimeError, match="not started"):
+            await adapter.fetch_room_context("1")
+
+    def test_format_context_for_prompt_empty(self, adapter):
+        """Test formatting empty context."""
+        result = adapter._format_context_for_prompt([], "Alice")
+        assert result == ""
+
+    def test_format_context_for_prompt_with_messages(self, adapter):
+        """Test formatting context with messages."""
+        messages = [
+            {
+                "body": {"plain": "Hello everyone"},
+                "creator": {"id": 1, "name": "Alice", "is_bot": False},
+            },
+            {
+                "body": {"plain": "Hi Alice!"},
+                "creator": {"id": 2, "name": "PawBot", "is_bot": True},
+            },
+        ]
+
+        result = adapter._format_context_for_prompt(messages, "Bob")
+
+        assert "recent conversation context" in result
+        assert "**Alice**: Hello everyone" in result
+        assert "**PawBot (bot)**: Hi Alice!" in result
+        assert "Now Bob says:" in result
+
+    def test_config_context_messages_default(self):
+        """Test context_messages has sensible default."""
+        config = CampfireConfig(
+            base_url="https://chat.example.com",
+            bot_key="123-abc",
+        )
+        assert config.context_messages == 10

@@ -26,6 +26,7 @@ class ChannelConfig:
     bot_key: str | None = None  # Campfire bot key (format: id-token)
     webhook_port: int = 8765  # Local port for webhook server
     webhook_path: str = "/webhook"  # Path for webhook endpoint
+    context_messages: int = 10  # Number of recent messages for conversation context
 
 
 @dataclass

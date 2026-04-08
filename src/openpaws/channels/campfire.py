@@ -11,14 +11,19 @@ Configuration:
         bot_key: ${CAMPFIRE_BOT_KEY}    # 123-abc123xyz456
         webhook_port: 8765              # Local port for webhook server
         webhook_path: /webhook          # Path for webhook endpoint
+        context_messages: 10            # Number of recent messages for context
 
 See docs/CAMPFIRE_SETUP.md for detailed setup instructions.
+
+Note: Reading conversation context requires the bot read API (PR #190).
+      Use the jpshackelford/once-campfire:bot-read-messages image or wait
+      for the PR to be merged upstream.
 """
 
 import asyncio
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from aiohttp import ClientSession, web
 
@@ -34,6 +39,9 @@ logger = logging.getLogger(__name__)
 # Regex to extract room_id from path like "/rooms/1/botkey/messages"
 ROOM_PATH_PATTERN = re.compile(r"/rooms/(\d+)/")
 
+# Default number of recent messages to include for context
+DEFAULT_CONTEXT_MESSAGES = 10
+
 
 @dataclass
 class CampfireConfig:
@@ -44,12 +52,14 @@ class CampfireConfig:
         bot_key: Bot authentication key in format {id}-{token}
         webhook_port: Local port to listen for webhook callbacks
         webhook_path: URL path for the webhook endpoint
+        context_messages: Number of recent messages to fetch for context (0 to disable)
     """
 
     base_url: str
     bot_key: str
     webhook_port: int = 8765
     webhook_path: str = "/webhook"
+    context_messages: int = DEFAULT_CONTEXT_MESSAGES
 
     def __post_init__(self):
         self._validate_base_url()
@@ -155,9 +165,39 @@ class CampfireAdapter(ChannelAdapter):
         return web.Response(status=204)
 
     async def _process_message_async(self, incoming: IncomingMessage) -> None:
-        """Process message asynchronously and send response back to Campfire."""
+        """Process message asynchronously and send response back to Campfire.
+
+        Fetches conversation context from the room and prepends it to the message
+        so the agent can understand the conversation flow.
+        """
         try:
-            response = await self._message_handler(incoming)
+            # Fetch conversation context (messages before the current one)
+            context_messages = await self.fetch_room_context(
+                incoming.channel_id, before_message_id=incoming.thread_id
+            )
+
+            # Build the full message with context
+            if context_messages:
+                context_text = self._format_context_for_prompt(
+                    context_messages, incoming.user_name
+                )
+                full_message = f"{context_text}{incoming.text}"
+                # Create a new IncomingMessage with the contextualized text
+                incoming_with_context = IncomingMessage(
+                    channel_type=incoming.channel_type,
+                    channel_id=incoming.channel_id,
+                    user_id=incoming.user_id,
+                    user_name=incoming.user_name,
+                    text=full_message,
+                    thread_id=incoming.thread_id,
+                    is_mention=incoming.is_mention,
+                    is_dm=incoming.is_dm,
+                    raw_event=incoming.raw_event,
+                )
+                response = await self._message_handler(incoming_with_context)
+            else:
+                response = await self._message_handler(incoming)
+
             if response:
                 outgoing = OutgoingMessage(
                     channel_id=incoming.channel_id,
@@ -238,6 +278,94 @@ class CampfireAdapter(ChannelAdapter):
         base = self._config.base_url.rstrip("/")
         return f"{base}/rooms/{room_id}/{self._config.bot_key}/messages"
 
+    def _build_read_messages_url(self, room_id: str) -> str:
+        """Build URL for reading messages from a room (bot read API)."""
+        base = self._config.base_url.rstrip("/")
+        return f"{base}/rooms/{room_id}/{self._config.bot_key}/messages"
+
+    async def fetch_room_context(
+        self, room_id: str, before_message_id: str | None = None
+    ) -> list[dict]:
+        """Fetch recent messages from a room for conversation context.
+
+        Uses the bot read API (requires PR #190 or jpshackelford/once-campfire fork).
+
+        Args:
+            room_id: The room to fetch messages from
+            before_message_id: Fetch messages before this ID (for pagination)
+
+        Returns:
+            List of message dicts with keys: id, body (plain/html), created_at, creator
+        """
+        if not self._http_session:
+            raise RuntimeError("Campfire adapter not started")
+
+        if self._config.context_messages <= 0:
+            return []
+
+        url = self._build_read_messages_url(room_id)
+        params = {}
+        if before_message_id:
+            params["before"] = before_message_id
+
+        try:
+            async with self._http_session.get(url, params=params) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    messages = data.get("messages", [])
+                    # Limit to configured number and reverse to chronological order
+                    limited = messages[: self._config.context_messages]
+                    return list(reversed(limited))
+                elif resp.status == 404:
+                    logger.warning(
+                        f"Bot read API not available (404). "
+                        f"Ensure you're using a Campfire image with PR #190."
+                    )
+                    return []
+                else:
+                    body = await resp.text()
+                    logger.error(f"Failed to fetch room context: {resp.status} - {body}")
+                    return []
+        except Exception as e:
+            logger.warning(f"Could not fetch room context: {e}")
+            return []
+
+    def _format_context_for_prompt(
+        self, messages: list[dict], current_user: str
+    ) -> str:
+        """Format conversation context messages into a prompt prefix.
+
+        Args:
+            messages: List of message dicts from fetch_room_context
+            current_user: Name of the user who sent the current message
+
+        Returns:
+            Formatted string with conversation context
+        """
+        if not messages:
+            return ""
+
+        lines = ["Here is the recent conversation context from this chat room:", ""]
+        for msg in messages:
+            creator = msg.get("creator", {})
+            name = creator.get("name", "Unknown")
+            is_bot = creator.get("is_bot", False)
+            body = msg.get("body", {})
+            text = body.get("plain", "")
+
+            # Mark bot messages clearly
+            if is_bot:
+                name = f"{name} (bot)"
+
+            lines.append(f"**{name}**: {text}")
+
+        lines.append("")
+        lines.append(f"---")
+        lines.append(f"Now {current_user} says:")
+        lines.append("")
+
+        return "\n".join(lines)
+
     async def send_message(self, message: OutgoingMessage) -> None:
         """Send a message to a Campfire room."""
         if not self._http_session:
@@ -267,6 +395,7 @@ def create_campfire_adapter(
     bot_key: str,
     webhook_port: int = 8765,
     webhook_path: str = "/webhook",
+    context_messages: int = DEFAULT_CONTEXT_MESSAGES,
 ) -> CampfireAdapter:
     """Create a Campfire adapter with the given configuration.
 
@@ -275,6 +404,7 @@ def create_campfire_adapter(
         bot_key: Bot authentication key
         webhook_port: Local port for webhook server
         webhook_path: URL path for webhook endpoint
+        context_messages: Number of recent messages to fetch for context (0 to disable)
 
     Returns:
         Configured CampfireAdapter instance
@@ -284,6 +414,7 @@ def create_campfire_adapter(
         bot_key=bot_key,
         webhook_port=webhook_port,
         webhook_path=webhook_path,
+        context_messages=context_messages,
     )
     return CampfireAdapter(config)
 

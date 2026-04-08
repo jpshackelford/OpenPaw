@@ -495,6 +495,7 @@ class Daemon:
                 bot_key=channel_config.bot_key,
                 webhook_port=channel_config.webhook_port,
                 webhook_path=channel_config.webhook_path,
+                context_messages=channel_config.context_messages,
             )
             return CampfireAdapter(config)
         except ValueError as e:
