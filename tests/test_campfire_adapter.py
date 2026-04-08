@@ -170,6 +170,68 @@ class TestCampfireAdapter:
 
         assert msg.text == ""
 
+    def test_create_incoming_message_has_callbacks(self, valid_config):
+        """Test that incoming message has status callbacks set."""
+        adapter = CampfireAdapter(valid_config)
+
+        payload = {
+            "user": {"id": 42, "name": "Test"},
+            "room": {"id": 1, "path": "/rooms/1/key/messages"},
+            "message": {"id": 999, "body": {"plain": "Hello"}},
+        }
+
+        msg = adapter._create_incoming_message(payload)
+
+        # Callbacks should be set
+        assert msg.on_processing_start is not None
+        assert msg.send_status is not None
+        assert callable(msg.on_processing_start)
+        assert callable(msg.send_status)
+
+    @pytest.mark.asyncio
+    async def test_on_processing_start_adds_reaction(self, valid_config):
+        """Test that on_processing_start callback adds 👀 reaction."""
+        adapter = CampfireAdapter(valid_config)
+
+        payload = {
+            "user": {"id": 42, "name": "Test"},
+            "room": {"id": 1, "path": "/rooms/1/key/messages"},
+            "message": {"id": 999, "body": {"plain": "Hello"}},
+        }
+
+        msg = adapter._create_incoming_message(payload)
+
+        # Mock add_reaction
+        adapter.add_reaction = AsyncMock()
+
+        await msg.on_processing_start()
+
+        adapter.add_reaction.assert_called_once_with("1", "999", "👀")
+
+    @pytest.mark.asyncio
+    async def test_send_status_sends_message(self, valid_config):
+        """Test that send_status callback sends a message."""
+        adapter = CampfireAdapter(valid_config)
+
+        payload = {
+            "user": {"id": 42, "name": "Test"},
+            "room": {"id": 1, "path": "/rooms/1/key/messages"},
+            "message": {"id": 999, "body": {"plain": "Hello"}},
+        }
+
+        msg = adapter._create_incoming_message(payload)
+
+        # Mock send_message
+        adapter.send_message = AsyncMock()
+
+        await msg.send_status("I'm working on it...")
+
+        adapter.send_message.assert_called_once()
+        outgoing = adapter.send_message.call_args[0][0]
+        assert outgoing.channel_id == "1"
+        assert outgoing.text == "I'm working on it..."
+        assert outgoing.thread_id == "999"
+
     def test_build_message_url(self, valid_config):
         """Test building message URL for a room."""
         adapter = CampfireAdapter(valid_config)

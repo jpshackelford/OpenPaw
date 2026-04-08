@@ -120,6 +120,21 @@ class CampfireAdapter(ChannelAdapter):
 
         room_path = room.get("path", "")
         room_id = self._extract_room_id(room_path) or str(room.get("id", ""))
+        message_id = str(message.get("id", ""))
+
+        # Create callbacks for status updates
+        async def on_processing_start() -> None:
+            """Add 👀 reaction when handler starts processing."""
+            await self.add_reaction(room_id, message_id, "👀")
+
+        async def send_status(text: str) -> None:
+            """Send an interim status message."""
+            outgoing = OutgoingMessage(
+                channel_id=room_id,
+                text=text,
+                thread_id=message_id,
+            )
+            await self.send_message(outgoing)
 
         return IncomingMessage(
             channel_type=self.channel_type,
@@ -127,7 +142,7 @@ class CampfireAdapter(ChannelAdapter):
             user_id=str(user.get("id", "")),
             user_name=user.get("name", ""),
             text=body.get("plain", ""),
-            thread_id=str(message.get("id", "")),
+            thread_id=message_id,
             is_mention=True,
             is_dm=False,
             raw_event={
@@ -136,6 +151,8 @@ class CampfireAdapter(ChannelAdapter):
                 "message": message,
                 "room_path": room_path,
             },
+            on_processing_start=on_processing_start,
+            send_status=send_status,
         )
 
     async def _handle_webhook(self, request: web.Request) -> web.Response:
@@ -171,9 +188,6 @@ class CampfireAdapter(ChannelAdapter):
         so the agent can understand the conversation flow.
         """
         try:
-            # Acknowledge the message with 👀 reaction immediately
-            await self.add_reaction(incoming.channel_id, incoming.thread_id, "👀")
-
             # Fetch conversation context (messages before the current one)
             context_messages = await self.fetch_room_context(
                 incoming.channel_id, before_message_id=incoming.thread_id

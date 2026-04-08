@@ -427,6 +427,13 @@ class Daemon:
             )
             return None
 
+        # Signal that we're starting to process (e.g., add 👀 reaction)
+        if message.on_processing_start:
+            try:
+                await message.on_processing_start()
+            except Exception as e:
+                logger.warning(f"Failed to signal processing start: {e}")
+
         # Run the conversation
         try:
             result = await self._runner.run_message(
