@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -19,9 +20,50 @@ from openhands.tools.terminal import TerminalTool
 from pydantic import SecretStr
 
 from openpaws.config import Config, GroupConfig
+from openpaws.tools.send_status import SendStatusTool
 
 if TYPE_CHECKING:
     from openpaws.scheduler import ScheduledTask
+
+
+def _register_openpaws_tools() -> None:
+    """Register OpenPaws custom tools with the SDK."""
+    from openhands.sdk.tool import register_tool
+
+    # Register SendStatusTool if not already registered
+    try:
+        register_tool(SendStatusTool.name, SendStatusTool)
+    except ValueError:
+        # Already registered
+        pass
+
+
+# Register tools at module load time
+_register_openpaws_tools()
+
+# Type for status message callback
+SendCallback = Callable[[str], Awaitable[None]]
+
+# Instructions for the agent on handling immediate vs. deferred responses
+CHAT_RESPONSE_INSTRUCTIONS = """
+## Response Guidelines
+
+When responding to messages from users in chat:
+
+1. **Assess first**: Determine if you can answer the user's question directly without
+   using any tools (terminal commands, file operations, etc.).
+
+2. **Immediate responses**: If you can answer immediately from your knowledge, just
+   provide the answer directly using the finish tool. No need to send a status message.
+
+3. **Work required**: If you need to run commands, read/edit files, or do any work:
+   - First, use the `send_status` tool to let the user know you're working on it
+   - Example: send_status("I'm on it! Let me look into that for you.")
+   - Then proceed with your work
+   - Finally, use the finish tool with your complete response
+
+Keep status messages brief and friendly. Only send ONE status message per request.
+"""
 
 
 @dataclass
@@ -62,7 +104,8 @@ class ConversationRunner:
         self.base_dir = base_dir or Path.home() / ".openpaws"
 
         self._llm: LLM | None = None
-        self._agent: Agent | None = None
+        # Note: Agent is not cached because it may need different tools per conversation
+        # (e.g., different send_callback for different channels)
 
     @property
     def llm(self) -> LLM:
@@ -71,12 +114,13 @@ class ConversationRunner:
             self._llm = self._create_llm()
         return self._llm
 
-    @property
-    def agent(self) -> Agent:
-        """Get or create the Agent instance."""
-        if self._agent is None:
-            self._agent = self._create_agent()
-        return self._agent
+    def get_agent(self, send_callback: SendCallback | None = None) -> Agent:
+        """Get an Agent instance, optionally with a send_callback for status messages.
+
+        Note: Unlike `llm`, this is not cached because different conversations
+        may need different tools (e.g., different send_callback for different channels).
+        """
+        return self._create_agent(send_callback)
 
     def _get_model(self) -> str:
         """Get the model to use, checking LLM_MODEL env var first."""
@@ -133,32 +177,60 @@ class ConversationRunner:
         """Create an LLM instance from configuration."""
         return LLM(**self._build_llm_kwargs())
 
-    def _get_default_tools(self) -> list[Tool]:
-        """Get the default tool specifications for OpenPaws (CLI mode, no browser)."""
-        return [
+    def _get_default_tools(
+        self, send_callback: SendCallback | None = None
+    ) -> list[Tool]:
+        """Get the default tool specifications for OpenPaws (CLI mode, no browser).
+
+        Args:
+            send_callback: Optional callback for sending status messages to channel.
+        """
+        tools = [
             Tool(name=TerminalTool.name),
             Tool(name=FileEditorTool.name),
             Tool(name=TaskTrackerTool.name),
             Tool(name=DelegateTool.name),
         ]
 
-    def _create_agent(self) -> Agent:
-        """Create an Agent instance with default tools."""
+        # Add SendStatusTool if callback is provided
+        if send_callback:
+            tools.append(
+                Tool(
+                    name=SendStatusTool.name,
+                    params={"send_callback": send_callback},
+                )
+            )
+
+        return tools
+
+    def _create_agent(
+        self, send_callback: SendCallback | None = None
+    ) -> Agent:
+        """Create an Agent instance with default tools.
+
+        Args:
+            send_callback: Optional callback for sending status messages.
+        """
         agent_config = self.config.agent
 
         agent_kwargs: dict[str, Any] = {
             "llm": self.llm,
-            "tools": self._get_default_tools(),
+            "tools": self._get_default_tools(send_callback),
             "condenser": get_default_condenser(
                 llm=self.llm.model_copy(update={"usage_id": "condenser"})
             ),
         }
 
-        # Custom system prompt if provided
+        # Build custom instructions with chat response guidelines
+        custom_instructions = CHAT_RESPONSE_INSTRUCTIONS
         if agent_config.system_prompt:
-            agent_kwargs["system_prompt_kwargs"] = {
-                "custom_instructions": agent_config.system_prompt
-            }
+            custom_instructions = (
+                f"{agent_config.system_prompt}\n\n{custom_instructions}"
+            )
+
+        agent_kwargs["system_prompt_kwargs"] = {
+            "custom_instructions": custom_instructions
+        }
 
         return Agent(**agent_kwargs)
 
@@ -190,11 +262,15 @@ class ConversationRunner:
         return callbacks
 
     def _create_conversation(
-        self, group: GroupConfig, conversation_id: UUID | None, callbacks: list
+        self,
+        group: GroupConfig,
+        conversation_id: UUID | None,
+        callbacks: list,
+        send_callback: SendCallback | None = None,
     ) -> Conversation:
         """Create a Conversation instance for a group."""
         return Conversation(
-            agent=self.agent,
+            agent=self.get_agent(send_callback),
             workspace=self._get_group_workspace(group),
             persistence_dir=self._get_group_persistence_dir(group),
             conversation_id=conversation_id,
@@ -229,8 +305,17 @@ class ConversationRunner:
         *,
         conversation_id: UUID | None = None,
         callbacks: list | None = None,
+        send_callback: SendCallback | None = None,
     ) -> ConversationResult:
-        """Run a conversation with a prompt for a specific group."""
+        """Run a conversation with a prompt for a specific group.
+
+        Args:
+            group_name: Name of the group to run the conversation for.
+            prompt: The user's message/prompt.
+            conversation_id: Optional conversation ID for persistence.
+            callbacks: Optional list of event callbacks.
+            send_callback: Optional callback for sending status messages to the channel.
+        """
         group = self.config.groups.get(group_name)
         if not group:
             return self._group_not_found_result(group_name)
@@ -238,7 +323,9 @@ class ConversationRunner:
         events: list[Event] = []
         all_callbacks = self._build_callbacks(events, callbacks)
         try:
-            conv = self._create_conversation(group, conversation_id, all_callbacks)
+            conv = self._create_conversation(
+                group, conversation_id, all_callbacks, send_callback
+            )
             return self._run_conversation(conv, prompt, events)
         except Exception as e:
             return self._conversation_error(e, events)
@@ -263,11 +350,22 @@ class ConversationRunner:
         *,
         sender: str | None = None,
         conversation_id: UUID | None = None,
+        send_callback: SendCallback | None = None,
     ) -> ConversationResult:
-        """Handle an incoming message from a channel."""
-        # sender can be used for context in the future
+        """Handle an incoming message from a channel.
+
+        Args:
+            group_name: Name of the group this message belongs to.
+            message: The user's message text.
+            sender: Optional sender name for context.
+            conversation_id: Optional conversation ID for persistence.
+            send_callback: Optional callback for sending status messages to the channel.
+        """
         return await self.run_prompt(
-            group_name=group_name, prompt=message, conversation_id=conversation_id
+            group_name=group_name,
+            prompt=message,
+            conversation_id=conversation_id,
+            send_callback=send_callback,
         )
 
     def _extract_final_response(self, events: list[Event]) -> str:

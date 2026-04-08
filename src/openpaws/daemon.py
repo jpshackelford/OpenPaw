@@ -434,12 +434,14 @@ class Daemon:
             except Exception as e:
                 logger.warning(f"Failed to signal processing start: {e}")
 
-        # Run the conversation
+        # Run the conversation, passing the send_status callback so the agent
+        # can send interim messages if needed
         try:
             result = await self._runner.run_message(
                 group_name=group_name,
                 message=message.text,
                 sender=message.user_name,
+                send_callback=message.send_status,
             )
             if result.success:
                 logger.info(f"Response generated for {group_name}")
