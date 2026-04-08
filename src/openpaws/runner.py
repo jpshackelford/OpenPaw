@@ -10,6 +10,12 @@ from uuid import UUID
 
 from openhands.sdk import LLM, Agent, Conversation
 from openhands.sdk.event.base import Event
+from openhands.sdk.tool import Tool
+from openhands.tools.delegate import DelegateTool
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.preset.default import get_default_condenser
+from openhands.tools.task_tracker import TaskTrackerTool
+from openhands.tools.terminal import TerminalTool
 from pydantic import SecretStr
 
 from openpaws.config import Config, GroupConfig
@@ -127,12 +133,25 @@ class ConversationRunner:
         """Create an LLM instance from configuration."""
         return LLM(**self._build_llm_kwargs())
 
+    def _get_default_tools(self) -> list[Tool]:
+        """Get the default tool specifications for OpenPaws (CLI mode, no browser)."""
+        return [
+            Tool(name=TerminalTool.name),
+            Tool(name=FileEditorTool.name),
+            Tool(name=TaskTrackerTool.name),
+            Tool(name=DelegateTool.name),
+        ]
+
     def _create_agent(self) -> Agent:
-        """Create an Agent instance."""
+        """Create an Agent instance with default tools."""
         agent_config = self.config.agent
 
         agent_kwargs: dict[str, Any] = {
             "llm": self.llm,
+            "tools": self._get_default_tools(),
+            "condenser": get_default_condenser(
+                llm=self.llm.model_copy(update={"usage_id": "condenser"})
+            ),
         }
 
         # Custom system prompt if provided

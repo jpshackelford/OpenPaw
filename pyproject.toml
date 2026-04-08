@@ -24,6 +24,7 @@ classifiers = [
 
 dependencies = [
     "openhands-sdk>=1.0.0",
+    "openhands-tools>=1.0.0",
     "click>=8.0.0",
     "pyyaml>=6.0",
     "croniter>=2.0.0",
