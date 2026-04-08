@@ -203,34 +203,50 @@ def check_hostname_resolves(hostname: str) -> bool:
         return False
 
 
-def ensure_hosts_entry(hostname: str) -> None:
-    """Ensure the hostname resolves, suggesting /etc/hosts entry if needed."""
+def ensure_hosts_entry(hostname: str) -> bool:
+    """Ensure the hostname resolves, adding /etc/hosts entry if needed.
+
+    Returns True if hostname resolves (either already or after adding entry).
+    Returns False if we couldn't make it resolve.
+    """
     if check_hostname_resolves(hostname):
         log_success(f"Hostname {hostname} resolves correctly")
-        return
+        return True
 
-    log_warn(f"Hostname {hostname} does not resolve")
-    log_info("For local development, add this line to /etc/hosts:")
-    print(f"    127.0.0.1 {hostname}")
-    log_info(f"Run: echo '127.0.0.1 {hostname}' | sudo tee -a /etc/hosts")
+    log_info(f"Hostname {hostname} does not resolve - adding to /etc/hosts...")
 
-    # Try to add it automatically (will fail without sudo password)
+    # Check if entry already exists in hosts file (but DNS not resolving yet)
     result = run_command(
         ["grep", "-q", hostname, "/etc/hosts"], check=False, capture=True
     )
-    if result.returncode != 0:
-        log_info("Attempting to add hosts entry (may require password)...")
-        add_result = subprocess.run(
-            f"echo '127.0.0.1 {hostname}' | sudo tee -a /etc/hosts",
-            shell=True,
-            capture_output=True,
-            text=True,
-        )
-        if add_result.returncode == 0:
-            log_success(f"Added {hostname} to /etc/hosts")
+    if result.returncode == 0:
+        # Entry exists but not resolving - might be a DNS cache issue
+        log_warn(f"Entry for {hostname} exists in /etc/hosts but not resolving")
+        log_info("Try flushing DNS cache: sudo dscacheutil -flushcache")
+        return False
+
+    # Add the entry (requires sudo)
+    log_info("Adding hosts entry (may require password)...")
+    add_result = subprocess.run(
+        ["sudo", "tee", "-a", "/etc/hosts"],
+        input=f"127.0.0.1 {hostname}\n",
+        capture_output=True,
+        text=True,
+    )
+
+    if add_result.returncode == 0:
+        log_success(f"Added {hostname} to /etc/hosts")
+        # Verify it now resolves
+        if check_hostname_resolves(hostname):
+            return True
         else:
-            log_warn("Could not add hosts entry automatically")
-            log_info("Please add the entry manually and re-run this script")
+            log_warn("Entry added but hostname still not resolving")
+            log_info("Try flushing DNS cache: sudo dscacheutil -flushcache")
+            return True  # Entry is there, should work after cache flush
+    else:
+        log_error("Could not add hosts entry")
+        log_info(f"Please run manually: echo '127.0.0.1 {hostname}' | sudo tee -a /etc/hosts")
+        return False
 
 
 def deploy_campfire(hostname: str, disable_tls: bool) -> None:
@@ -244,9 +260,7 @@ def deploy_campfire(hostname: str, disable_tls: bool) -> None:
         log_info("Use 'once' command to manage existing installation")
         return
 
-    # For local development, ensure hostname resolves
-    if hostname.endswith(".localhost") or hostname == "localhost":
-        ensure_hosts_entry(hostname)
+    # Hostname resolution is handled in check_prerequisites for .localhost domains
 
     # Build deploy command with full image path
     # The ONCE CLI requires the full ghcr.io path for the Campfire image
@@ -474,7 +488,9 @@ def print_next_steps(hostname: str, disable_tls: bool) -> None:
     print()
 
 
-def check_prerequisites(skip_campfire: bool, skip_openpaws: bool) -> bool:
+def check_prerequisites(
+    skip_campfire: bool, skip_openpaws: bool, hostname: str
+) -> bool:
     """Check all prerequisites upfront. Returns True if all checks pass."""
     log_info("Checking prerequisites...")
     all_ok = True
@@ -534,6 +550,13 @@ def check_prerequisites(skip_campfire: bool, skip_openpaws: bool) -> bool:
         except ImportError:
             log_info("Installing PyYAML for config merging...")
             install_pyyaml()
+
+    # Hostname resolution for .localhost domains (requires /etc/hosts entry)
+    if not skip_campfire and (
+        hostname.endswith(".localhost") or hostname == "localhost"
+    ):
+        if not ensure_hosts_entry(hostname):
+            all_ok = False
 
     print()
     return all_ok
@@ -598,7 +621,7 @@ Examples:
     print()
 
     # Fail fast: check all prerequisites upfront
-    if not check_prerequisites(args.skip_campfire, args.skip_openpaws):
+    if not check_prerequisites(args.skip_campfire, args.skip_openpaws, args.hostname):
         log_error("Prerequisites not met. Please fix the issues above and try again.")
         sys.exit(1)
 
