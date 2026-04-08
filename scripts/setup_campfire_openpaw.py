@@ -650,11 +650,38 @@ def check_prerequisites(
 
 def prompt_yes_no(prompt: str, default: bool = True) -> bool:
     """Prompt for yes/no input."""
+    import sys
+    import tty
+    import termios
+
     suffix = " [Y/n] " if default else " [y/N] "
-    response = input(prompt + suffix).strip().lower()
-    if not response:
+    sys.stdout.write(prompt + suffix)
+    sys.stdout.flush()
+
+    # Save terminal settings and set to raw mode to read single char
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+    # Print newline after input
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+    # Handle Enter key (CR or LF) as accepting default
+    if ch in ("\r", "\n", ""):
         return default
-    return response in ("y", "yes")
+    # Handle y/Y as yes
+    if ch.lower() == "y":
+        return True
+    # Handle n/N as no
+    if ch.lower() == "n":
+        return False
+    # Any other key: return default
+    return default
 
 
 def main() -> None:
