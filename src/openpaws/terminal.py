@@ -114,11 +114,24 @@ class RealTerminalInput:
     and provides interactive prompts with proper echo handling.
 
     Note: This requires a real TTY and won't work with piped input
-    or in non-interactive environments.
+    or in non-interactive environments. Methods will fall back to
+    standard input() when stdin is not a TTY.
     """
+
+    def _is_tty(self) -> bool:
+        """Check if stdin is connected to a TTY."""
+        return sys.stdin.isatty()
 
     def read_char(self) -> str:
         """Read a single character using raw terminal mode."""
+        if not self._is_tty():
+            # Fallback for non-TTY: read first char of input line
+            try:
+                line = input()
+                return line[0] if line else "\n"
+            except EOFError:
+                return "\n"
+
         import termios
         import tty
 
@@ -132,6 +145,13 @@ class RealTerminalInput:
 
     def read_line(self) -> str:
         """Read a line using cbreak mode for character-by-character handling."""
+        if not self._is_tty():
+            # Fallback for non-TTY: use standard input
+            try:
+                return input()
+            except EOFError:
+                return ""
+
         import termios
         import tty
 

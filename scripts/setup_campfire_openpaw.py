@@ -331,9 +331,16 @@ def ensure_hosts_entry(hostname: str) -> bool:
     # When using subprocess with input= and capture_output=, the terminal may have
     # issues with sudo password input (e.g., Enter key not working)
     log_info("Adding hosts entry (may require password)...")
-    add_result = subprocess.run(
-        ["sudo", "sh", "-c", f"echo '127.0.0.1 {hostname}' >> /etc/hosts"],
-    )
+    try:
+        add_result = subprocess.run(
+            ["sudo", "sh", "-c", f"echo '127.0.0.1 {hostname}' >> /etc/hosts"],
+            timeout=60,  # 60 second timeout for password entry
+        )
+    except subprocess.TimeoutExpired:
+        log_error("Timed out waiting for sudo password")
+        manual_cmd = f"echo '127.0.0.1 {hostname}' | sudo tee -a /etc/hosts"
+        log_info(f"Please run manually: {manual_cmd}")
+        return False
 
     if add_result.returncode == 0:
         log_success(f"Added {hostname} to /etc/hosts")
@@ -346,7 +353,8 @@ def ensure_hosts_entry(hostname: str) -> bool:
             return True  # Entry is there, should work after cache flush
     else:
         log_error("Could not add hosts entry")
-        log_info(f"Please run manually: echo '127.0.0.1 {hostname}' | sudo tee -a /etc/hosts")
+        manual_cmd = f"echo '127.0.0.1 {hostname}' | sudo tee -a /etc/hosts"
+        log_info(f"Please run manually: {manual_cmd}")
         return False
 
 
@@ -662,10 +670,23 @@ def check_prerequisites(
 def prompt_yes_no(prompt: str, default: bool = True) -> bool:
     """Prompt for yes/no input."""
     import sys
-    import tty
-    import termios
 
     suffix = " [Y/n] " if default else " [y/N] "
+
+    # Check if stdin is a TTY before using termios
+    if not sys.stdin.isatty():
+        # Fallback to regular input in non-interactive mode
+        try:
+            response = input(prompt + suffix).strip().lower()
+            if not response:
+                return default
+            return response in ("y", "yes")
+        except EOFError:
+            return default
+
+    import termios
+    import tty
+
     sys.stdout.write(prompt + suffix)
     sys.stdout.flush()
 

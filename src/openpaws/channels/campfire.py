@@ -116,6 +116,7 @@ class CampfireAdapter(ChannelAdapter):
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._http_session: ClientSession | None = None
+        self._background_tasks: set[asyncio.Task] = set()
 
     @property
     def channel_type(self) -> str:
@@ -197,7 +198,10 @@ class CampfireAdapter(ChannelAdapter):
         )
 
         # Process message in background - don't block the webhook response
-        asyncio.create_task(self._process_message_async(incoming))
+        # Track task for proper cleanup during shutdown
+        task = asyncio.create_task(self._process_message_async(incoming))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
         # Acknowledge receipt immediately (204 No Content - no body for Campfire)
         return web.Response(status=204)
@@ -292,12 +296,23 @@ class CampfireAdapter(ChannelAdapter):
         self._site = self._runner = self._http_session = self._app = None
         self._message_handler = None
 
+    async def _cancel_background_tasks(self) -> None:
+        """Cancel all running background tasks and wait for them to complete."""
+        if not self._background_tasks:
+            return
+        logger.info(f"Cancelling {len(self._background_tasks)} background tasks")
+        for task in list(self._background_tasks):
+            task.cancel()
+        await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
+
     async def stop(self) -> None:
         """Stop the Campfire adapter."""
         if not self._running:
             return
         logger.info("Stopping Campfire adapter")
         self._running = False
+        await self._cancel_background_tasks()
         await self._cleanup_resources()
 
     def _build_message_url(self, room_id: str) -> str:
