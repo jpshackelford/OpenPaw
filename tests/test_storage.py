@@ -4,7 +4,7 @@ from datetime import datetime
 
 import pytest
 
-from openpaws.storage import SessionState, Storage, TaskState
+from openpaws.storage import QueueItem, SessionState, Storage, TaskState
 
 
 @pytest.fixture
@@ -248,3 +248,253 @@ class TestStorageInitialization:
         monkeypatch.setenv("OPENPAWS_DIR", str(tmp_path))
         storage = Storage()
         assert storage.db_path == tmp_path / "state.db"
+
+    def test_creates_queue_table(self, tmp_path):
+        """Test that storage creates the queue table."""
+        import sqlite3
+
+        db_path = tmp_path / "test.db"
+        Storage(db_path=db_path)
+
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = {row[0] for row in cursor.fetchall()}
+        conn.close()
+
+        assert "queue" in tables
+
+
+class TestQueuePersistence:
+    """Tests for queue item persistence."""
+
+    def test_create_queue_item(self):
+        """Test QueueItem.create factory method."""
+        item = QueueItem.create(
+            prompt="Test prompt",
+            group_name="main",
+            context={"key": "value"},
+            priority=5,
+            workflow_id="workflow-123",
+        )
+        assert item.id is not None
+        assert item.prompt == "Test prompt"
+        assert item.group_name == "main"
+        assert item.context == {"key": "value"}
+        assert item.priority == 5
+        assert item.workflow_id == "workflow-123"
+        assert item.status == "pending"
+        assert item.created_at is not None
+
+    def test_enqueue_and_load(self, storage):
+        """Test enqueueing and loading a queue item."""
+        item = QueueItem.create(
+            prompt="Test prompt",
+            group_name="main",
+            context={"step": 1},
+            priority=1,
+            parent_conversation_id="parent-123",
+            workflow_id="workflow-456",
+        )
+        returned_id = storage.enqueue(item)
+        assert returned_id == item.id
+
+        loaded = storage.load_queue_item(item.id)
+        assert loaded is not None
+        assert loaded.id == item.id
+        assert loaded.prompt == "Test prompt"
+        assert loaded.group_name == "main"
+        assert loaded.context == {"step": 1}
+        assert loaded.priority == 1
+        assert loaded.status == "pending"
+        assert loaded.parent_conversation_id == "parent-123"
+        assert loaded.workflow_id == "workflow-456"
+
+    def test_load_nonexistent_queue_item(self, storage):
+        """Test loading a queue item that doesn't exist."""
+        loaded = storage.load_queue_item("nonexistent")
+        assert loaded is None
+
+    def test_dequeue_single_item(self, storage):
+        """Test dequeuing a single item."""
+        item = QueueItem.create(prompt="Test", group_name="main")
+        storage.enqueue(item)
+
+        dequeued = storage.dequeue(max_items=1)
+        assert len(dequeued) == 1
+        assert dequeued[0].id == item.id
+        assert dequeued[0].status == "processing"
+
+        # Verify status is persisted
+        loaded = storage.load_queue_item(item.id)
+        assert loaded.status == "processing"
+
+    def test_dequeue_respects_priority(self, storage):
+        """Test that dequeue returns items in priority order."""
+        low = QueueItem.create(prompt="Low", group_name="main", priority=0)
+        high = QueueItem.create(prompt="High", group_name="main", priority=10)
+        medium = QueueItem.create(prompt="Medium", group_name="main", priority=5)
+
+        storage.enqueue(low)
+        storage.enqueue(high)
+        storage.enqueue(medium)
+
+        dequeued = storage.dequeue(max_items=3)
+        assert len(dequeued) == 3
+        assert dequeued[0].id == high.id
+        assert dequeued[1].id == medium.id
+        assert dequeued[2].id == low.id
+
+    def test_dequeue_respects_max_items(self, storage):
+        """Test that dequeue respects the max_items limit."""
+        for i in range(5):
+            storage.enqueue(QueueItem.create(prompt=f"Item {i}", group_name="main"))
+
+        dequeued = storage.dequeue(max_items=2)
+        assert len(dequeued) == 2
+
+    def test_dequeue_only_pending_items(self, storage):
+        """Test that dequeue only returns pending items."""
+        pending = QueueItem.create(prompt="Pending", group_name="main")
+        storage.enqueue(pending)
+
+        # First dequeue marks as processing
+        storage.dequeue(max_items=1)
+
+        # Second dequeue should return empty
+        dequeued = storage.dequeue(max_items=1)
+        assert len(dequeued) == 0
+
+    def test_complete_queue_item(self, storage):
+        """Test marking a queue item as completed."""
+        item = QueueItem.create(prompt="Test", group_name="main")
+        storage.enqueue(item)
+
+        result = storage.complete_queue_item(item.id, "Success result")
+        assert result is True
+
+        loaded = storage.load_queue_item(item.id)
+        assert loaded.status == "completed"
+        assert loaded.result == "Success result"
+        assert loaded.processed_at is not None
+
+    def test_complete_nonexistent_item(self, storage):
+        """Test completing a queue item that doesn't exist."""
+        result = storage.complete_queue_item("nonexistent", "Result")
+        assert result is False
+
+    def test_fail_queue_item(self, storage):
+        """Test marking a queue item as failed."""
+        item = QueueItem.create(prompt="Test", group_name="main")
+        storage.enqueue(item)
+
+        result = storage.fail_queue_item(item.id, "Error message")
+        assert result is True
+
+        loaded = storage.load_queue_item(item.id)
+        assert loaded.status == "failed"
+        assert loaded.error == "Error message"
+        assert loaded.processed_at is not None
+
+    def test_fail_nonexistent_item(self, storage):
+        """Test failing a queue item that doesn't exist."""
+        result = storage.fail_queue_item("nonexistent", "Error")
+        assert result is False
+
+    def test_list_queue_all(self, storage):
+        """Test listing all queue items."""
+        item1 = QueueItem.create(prompt="Item 1", group_name="main")
+        item2 = QueueItem.create(prompt="Item 2", group_name="main")
+        storage.enqueue(item1)
+        storage.enqueue(item2)
+
+        items = storage.list_queue()
+        assert len(items) == 2
+
+    def test_list_queue_by_status(self, storage):
+        """Test listing queue items filtered by status."""
+        item1 = QueueItem.create(prompt="Item 1", group_name="main")
+        item2 = QueueItem.create(prompt="Item 2", group_name="main")
+        storage.enqueue(item1)
+        storage.enqueue(item2)
+
+        # Complete one item
+        storage.complete_queue_item(item1.id, "Done")
+
+        pending = storage.list_queue(status="pending")
+        assert len(pending) == 1
+        assert pending[0].id == item2.id
+
+        completed = storage.list_queue(status="completed")
+        assert len(completed) == 1
+        assert completed[0].id == item1.id
+
+    def test_clear_queue_all(self, storage):
+        """Test clearing all queue items."""
+        for i in range(3):
+            storage.enqueue(QueueItem.create(prompt=f"Item {i}", group_name="main"))
+
+        deleted = storage.clear_queue()
+        assert deleted == 3
+
+        items = storage.list_queue()
+        assert len(items) == 0
+
+    def test_clear_queue_by_status(self, storage):
+        """Test clearing queue items by status."""
+        item1 = QueueItem.create(prompt="Item 1", group_name="main")
+        item2 = QueueItem.create(prompt="Item 2", group_name="main")
+        storage.enqueue(item1)
+        storage.enqueue(item2)
+
+        # Complete one item
+        storage.complete_queue_item(item1.id, "Done")
+
+        # Clear only completed items
+        deleted = storage.clear_queue(status="completed")
+        assert deleted == 1
+
+        # Pending item should still exist
+        items = storage.list_queue()
+        assert len(items) == 1
+        assert items[0].id == item2.id
+
+    def test_get_queue_stats(self, storage):
+        """Test getting queue statistics."""
+        item1 = QueueItem.create(prompt="Item 1", group_name="main")
+        item2 = QueueItem.create(prompt="Item 2", group_name="main")
+        item3 = QueueItem.create(prompt="Item 3", group_name="main")
+        storage.enqueue(item1)
+        storage.enqueue(item2)
+        storage.enqueue(item3)
+
+        # Complete one, fail one
+        storage.complete_queue_item(item1.id, "Done")
+        storage.fail_queue_item(item2.id, "Error")
+
+        stats = storage.get_queue_stats()
+        assert stats.get("pending") == 1
+        assert stats.get("completed") == 1
+        assert stats.get("failed") == 1
+
+    def test_queue_item_with_null_context(self, storage):
+        """Test queue item with no context."""
+        item = QueueItem.create(prompt="Test", group_name="main", context=None)
+        storage.enqueue(item)
+
+        loaded = storage.load_queue_item(item.id)
+        assert loaded.context is None
+
+    def test_queue_fifo_within_priority(self, storage):
+        """Test that items with same priority are FIFO ordered."""
+        import time
+
+        item1 = QueueItem.create(prompt="First", group_name="main", priority=5)
+        storage.enqueue(item1)
+        time.sleep(0.01)  # Small delay to ensure different timestamps
+
+        item2 = QueueItem.create(prompt="Second", group_name="main", priority=5)
+        storage.enqueue(item2)
+
+        dequeued = storage.dequeue(max_items=2)
+        assert dequeued[0].id == item1.id
+        assert dequeued[1].id == item2.id

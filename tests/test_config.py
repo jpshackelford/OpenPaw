@@ -6,6 +6,7 @@ import tempfile
 import pytest
 
 from openpaws.config import (
+    QueueConfig,
     _parse_interval,
     _validate_task_schedule,
     expand_env_vars,
@@ -403,5 +404,146 @@ tasks:
             assert config.tasks["active-task"].enabled is True
             assert config.tasks["paused-task"].enabled is False
             assert config.tasks["default-task"].enabled is True
+
+        os.unlink(f.name)
+
+
+class TestQueueConfig:
+    """Tests for queue configuration."""
+
+    def test_queue_config_defaults(self):
+        """Test QueueConfig default values."""
+        config = QueueConfig()
+        assert config.enabled is True
+        assert config.heartbeat_interval == 300
+        assert config.max_dispatch == 5
+
+    def test_load_queue_config_defaults(self):
+        """Test that queue config uses defaults when not specified."""
+        config_content = """
+channels:
+  telegram:
+    bot_token: "test-token"
+
+groups:
+  main:
+    channel: telegram
+    chat_id: "123"
+
+tasks:
+  daily:
+    schedule: "0 9 * * *"
+    group: main
+    prompt: "Daily summary"
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(config_content)
+            f.flush()
+
+            config = load_config(f.name)
+            assert config.queue.enabled is True
+            assert config.queue.heartbeat_interval == 300
+            assert config.queue.max_dispatch == 5
+
+        os.unlink(f.name)
+
+    def test_load_queue_config_custom(self):
+        """Test loading custom queue configuration."""
+        config_content = """
+channels:
+  telegram:
+    bot_token: "test-token"
+
+groups:
+  main:
+    channel: telegram
+    chat_id: "123"
+
+tasks:
+  daily:
+    schedule: "0 9 * * *"
+    group: main
+    prompt: "Daily summary"
+
+queue:
+  enabled: true
+  heartbeat_interval: 60
+  max_dispatch: 10
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(config_content)
+            f.flush()
+
+            config = load_config(f.name)
+            assert config.queue.enabled is True
+            assert config.queue.heartbeat_interval == 60
+            assert config.queue.max_dispatch == 10
+
+        os.unlink(f.name)
+
+    def test_load_queue_config_disabled(self):
+        """Test loading queue config with enabled: false."""
+        config_content = """
+channels:
+  telegram:
+    bot_token: "test-token"
+
+groups:
+  main:
+    channel: telegram
+    chat_id: "123"
+
+tasks:
+  daily:
+    schedule: "0 9 * * *"
+    group: main
+    prompt: "Daily summary"
+
+queue:
+  enabled: false
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(config_content)
+            f.flush()
+
+            config = load_config(f.name)
+            assert config.queue.enabled is False
+            # Other defaults should still apply
+            assert config.queue.heartbeat_interval == 300
+            assert config.queue.max_dispatch == 5
+
+        os.unlink(f.name)
+
+    def test_load_queue_config_partial(self):
+        """Test loading queue config with partial options."""
+        config_content = """
+channels:
+  telegram:
+    bot_token: "test-token"
+
+groups:
+  main:
+    channel: telegram
+    chat_id: "123"
+
+tasks:
+  daily:
+    schedule: "0 9 * * *"
+    group: main
+    prompt: "Daily summary"
+
+queue:
+  heartbeat_interval: 120
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(config_content)
+            f.flush()
+
+            config = load_config(f.name)
+            # Specified value
+            assert config.queue.heartbeat_interval == 120
+            # Defaults for unspecified
+            assert config.queue.enabled is True
+            assert config.queue.max_dispatch == 5
 
         os.unlink(f.name)

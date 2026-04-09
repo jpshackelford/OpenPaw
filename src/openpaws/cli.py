@@ -448,6 +448,120 @@ def logs(group, task, lines, follow):
 
 
 @main.group()
+def queue():
+    """Manage the conversation queue."""
+    pass
+
+
+def _format_queue_item(item) -> None:
+    """Print a single queue item row."""
+    status_emoji = {
+        "pending": "⏳",
+        "processing": "🔄",
+        "completed": "✅",
+        "failed": "❌",
+    }.get(item.status, "❓")
+
+    prompt_preview = item.prompt[:40] + "..." if len(item.prompt) > 40 else item.prompt
+    created = item.created_at.strftime("%Y-%m-%d %H:%M") if item.created_at else "-"
+    click.echo(
+        f"  {status_emoji} {item.id[:8]}  "
+        f"p={item.priority}  {item.group_name:<10}  "
+        f"{created}  {prompt_preview}"
+    )
+
+
+@queue.command("list")
+@click.option("--status", "-s", help="Filter by status (pending/completed/failed)")
+@click.option("--limit", "-n", default=20, help="Maximum items to show")
+def queue_list(status, limit):
+    """List queued conversations."""
+    storage = Storage()
+    items = storage.list_queue(status=status, limit=limit)
+
+    if not items:
+        click.echo("📋 Queue is empty")
+        return
+
+    click.echo("📋 Conversation Queue")
+    click.echo("─" * 80)
+
+    for item in items:
+        _format_queue_item(item)
+
+
+@queue.command("stats")
+def queue_stats():
+    """Show queue statistics."""
+    storage = Storage()
+    stats = storage.get_queue_stats()
+
+    total = sum(stats.values())
+    click.echo("📊 Queue Statistics")
+    click.echo("─" * 40)
+    click.echo(f"  Pending:     {stats.get('pending', 0):>6}")
+    click.echo(f"  Processing:  {stats.get('processing', 0):>6}")
+    click.echo(f"  Completed:   {stats.get('completed', 0):>6}")
+    click.echo(f"  Failed:      {stats.get('failed', 0):>6}")
+    click.echo("─" * 40)
+    click.echo(f"  Total:       {total:>6}")
+
+
+@queue.command("clear")
+@click.option(
+    "--status", "-s",
+    type=click.Choice(["completed", "failed", "all"]),
+    default="completed",
+    help="Status to clear (default: completed)",
+)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+def queue_clear(status, yes):
+    """Clear queue items by status."""
+    storage = Storage()
+
+    if status == "all":
+        if not yes:
+            click.confirm(
+                "⚠️  This will delete ALL queue items. Continue?",
+                abort=True,
+            )
+        # Clear all statuses
+        deleted = 0
+        for s in ["pending", "processing", "completed", "failed"]:
+            deleted += storage.clear_queue(status=s)
+    else:
+        if not yes:
+            click.confirm(
+                f"Delete all '{status}' queue items?",
+                abort=True,
+            )
+        deleted = storage.clear_queue(status=status)
+
+    click.echo(f"🗑️  Deleted {deleted} queue item(s)")
+
+
+@queue.command("add")
+@click.argument("prompt")
+@click.option("--group", "-g", required=True, help="Group name to run in")
+@click.option("--priority", "-p", default=0, help="Priority (higher = processed first)")
+@click.option("--workflow-id", "-w", help="Optional workflow ID")
+def queue_add(prompt, group, priority, workflow_id):
+    """Manually add a conversation to the queue."""
+    from openpaws.storage import QueueItem
+
+    storage = Storage()
+    item = QueueItem.create(
+        prompt=prompt,
+        group_name=group,
+        priority=priority,
+        workflow_id=workflow_id,
+    )
+    storage.enqueue(item)
+    click.echo(f"✅ Queued conversation: {item.id[:8]}...")
+    click.echo(f"   Group: {group}, Priority: {priority}")
+
+
+@main.group()
 def setup():
     """Setup wizards for channels and integrations."""
     pass

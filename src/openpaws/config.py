@@ -75,6 +75,19 @@ class AgentConfig:
 
 
 @dataclass
+class QueueConfig:
+    """Configuration for the queue-based dispatch system.
+
+    The queue enables multi-conversation orchestration where agents can
+    queue follow-up conversations that are processed by a heartbeat dispatcher.
+    """
+
+    enabled: bool = True
+    heartbeat_interval: int = 300  # seconds (5 min default)
+    max_dispatch: int = 5  # max items to process per heartbeat cycle
+
+
+@dataclass
 class Config:
     """Root configuration."""
 
@@ -82,6 +95,7 @@ class Config:
     groups: dict[str, GroupConfig] = field(default_factory=dict)
     tasks: dict[str, TaskConfig] = field(default_factory=dict)
     agent: AgentConfig = field(default_factory=AgentConfig)
+    queue: QueueConfig = field(default_factory=QueueConfig)
 
 
 def expand_env_vars(value: str) -> str:
@@ -203,4 +217,5 @@ def load_config(path: Path | str | None = None) -> Config:
         groups=_parse_groups(raw),
         tasks=_parse_tasks(raw),
         agent=AgentConfig(**raw.get("agent", {})),
+        queue=QueueConfig(**raw.get("queue", {})),
     )
