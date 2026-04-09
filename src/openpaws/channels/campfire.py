@@ -354,6 +354,11 @@ class CampfireAdapter(ChannelAdapter):
             return []
         # Apply hard cap, then take configured amount
         limit = min(self._config.context_messages, MAX_CONTEXT_MESSAGES)
+        if self._config.context_messages > MAX_CONTEXT_MESSAGES:
+            logger.warning(
+                f"Context messages capped at {MAX_CONTEXT_MESSAGES} "
+                f"(configured: {self._config.context_messages})"
+            )
         # API returns newest-first; take first N (most recent) then reverse
         limited = messages[:limit]
         return list(reversed(limited))
