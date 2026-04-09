@@ -527,23 +527,22 @@ class Daemon:
         self._channel_adapters_by_type[adapter.channel_type] = adapter
         logger.info(f"Configured {adapter.channel_type} channel: {name}")
 
+    def _create_adapter_for_type(self, channel_config):
+        """Create an adapter based on channel type."""
+        factories = {
+            "slack": self._create_slack_adapter,
+            "gmail": self._create_gmail_adapter,
+            "campfire": self._create_campfire_adapter,
+        }
+        factory = factories.get(channel_config.type)
+        return factory(channel_config) if factory else None
+
     def _setup_channel_adapters(self) -> None:
         """Initialize channel adapters from configuration."""
         self._channel_adapters = []
         self._channel_adapters_by_type = {}
-
-        for name, channel_config in self.config.channels.items():
-            adapter = None
-            if channel_config.type == "slack":
-                adapter = self._create_slack_adapter(channel_config)
-            elif channel_config.type == "gmail":
-                adapter = self._create_gmail_adapter(channel_config)
-            elif channel_config.type == "campfire":
-                adapter = self._create_campfire_adapter(channel_config)
-            else:
-                logger.debug(f"Skipping channel type: {channel_config.type}")
-
-            if adapter:
+        for name, cfg in self.config.channels.items():
+            if adapter := self._create_adapter_for_type(cfg):
                 self._register_adapter(adapter, name)
 
     async def _start_channel_adapters(self) -> None:

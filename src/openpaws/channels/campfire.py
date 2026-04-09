@@ -301,23 +301,20 @@ class CampfireAdapter(ChannelAdapter):
         base = self._config.base_url.rstrip("/")
         return f"{base}/rooms/{room_id}/{self._config.bot_key}/messages"
 
-    async def _fetch_messages_from_api(
-        self, url: str, params: dict
-    ) -> list[dict] | None:
+    def _handle_fetch_error(self, status: int, body: str) -> None:
+        """Log appropriate error for fetch messages failure."""
+        if status == 404:
+            logger.warning("Bot read API not available (404). Requires Campfire PR #190.")
+        else:
+            logger.error(f"Failed to fetch room context: {status} - {body}")
+
+    async def _fetch_messages_from_api(self, url: str, params: dict) -> list[dict] | None:
         """Fetch messages from the API and return them or None on error."""
         try:
             async with self._http_session.get(url, params=params) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
-                    return data.get("messages", [])
-                if resp.status == 404:
-                    logger.warning(
-                        "Bot read API not available (404). "
-                        "Ensure you're using a Campfire image with PR #190."
-                    )
-                else:
-                    body = await resp.text()
-                    logger.error(f"Failed to fetch room context: {resp.status} - {body}")
+                    return (await resp.json()).get("messages", [])
+                self._handle_fetch_error(resp.status, await resp.text())
         except Exception as e:
             logger.warning(f"Could not fetch room context: {e}")
         return None
