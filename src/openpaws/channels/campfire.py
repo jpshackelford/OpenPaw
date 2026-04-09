@@ -31,6 +31,7 @@ import logging
 import re
 from dataclasses import dataclass, replace
 
+import markdown
 from aiohttp import ClientSession, web
 
 from openpaws.channels.base import (
@@ -397,14 +398,27 @@ class CampfireAdapter(ChannelAdapter):
             logger.error(f"Failed to send message: {resp.status} - {body}")
             raise RuntimeError(f"Campfire API error: {resp.status}")
 
+    def _markdown_to_html(self, text: str) -> str:
+        """Convert markdown text to HTML for Campfire's ActionText rendering."""
+        # Use fenced_code and tables extensions for better formatting
+        return markdown.markdown(
+            text,
+            extensions=["fenced_code", "tables", "nl2br"],
+        )
+
     async def send_message(self, message: OutgoingMessage) -> None:
-        """Send a message to a Campfire room."""
+        """Send a message to a Campfire room.
+
+        Converts markdown to HTML before sending since Campfire uses ActionText
+        which renders HTML but not markdown.
+        """
         if not self._http_session:
             raise RuntimeError("Campfire adapter not started")
         url = self._build_message_url(message.channel_id)
-        headers = {"Content-Type": "text/plain; charset=utf-8"}
+        html_content = self._markdown_to_html(message.text)
+        headers = {"Content-Type": "text/html; charset=utf-8"}
         async with self._http_session.post(
-            url, data=message.text, headers=headers
+            url, data=html_content, headers=headers
         ) as resp:
             await self._handle_send_response(resp, message.channel_id)
 

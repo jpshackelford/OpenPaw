@@ -579,6 +579,58 @@ class TestCampfireAdapterLifecycle:
         assert adapter.is_running() is False
 
 
+class TestCampfireMarkdownToHtml:
+    """Tests for markdown to HTML conversion."""
+
+    @pytest.fixture
+    def adapter(self):
+        """Create an adapter for testing."""
+        config = CampfireConfig(
+            base_url="https://chat.example.com",
+            bot_key="123-abc",
+        )
+        return CampfireAdapter(config)
+
+    def test_plain_text_becomes_paragraph(self, adapter):
+        """Plain text is wrapped in paragraph tags."""
+        result = adapter._markdown_to_html("Hello world")
+        assert result == "<p>Hello world</p>"
+
+    def test_bold_text(self, adapter):
+        """Bold markdown is converted to strong tags."""
+        result = adapter._markdown_to_html("This is **bold** text")
+        assert "<strong>bold</strong>" in result
+
+    def test_italic_text(self, adapter):
+        """Italic markdown is converted to em tags."""
+        result = adapter._markdown_to_html("This is *italic* text")
+        assert "<em>italic</em>" in result
+
+    def test_code_block(self, adapter):
+        """Fenced code blocks are converted properly."""
+        result = adapter._markdown_to_html("```python\nprint('hello')\n```")
+        assert "<pre>" in result
+        assert "<code" in result  # Has class attribute: <code class="language-python">
+        assert "print" in result
+
+    def test_inline_code(self, adapter):
+        """Inline code is converted to code tags."""
+        result = adapter._markdown_to_html("Use `print()` function")
+        assert "<code>print()</code>" in result
+
+    def test_newlines_become_breaks(self, adapter):
+        """Newlines are converted to br tags via nl2br extension."""
+        result = adapter._markdown_to_html("Line one\nLine two")
+        assert "<br" in result
+
+    def test_table_formatting(self, adapter):
+        """Tables are converted properly via tables extension."""
+        md = "| Header |\n|--------|\n| Cell   |"
+        result = adapter._markdown_to_html(md)
+        assert "<table>" in result
+        assert "<th>" in result or "<td>" in result
+
+
 class TestCampfireAdapterSendMessage:
     """Tests for Campfire adapter send_message."""
 
@@ -592,7 +644,11 @@ class TestCampfireAdapterSendMessage:
 
     @pytest.mark.asyncio
     async def test_send_message_success(self, config):
-        """Test sending a message successfully."""
+        """Test sending a message successfully.
+
+        Messages are converted from markdown to HTML before sending since
+        Campfire uses ActionText which renders HTML but not markdown.
+        """
         adapter = CampfireAdapter(config)
 
         mock_response = AsyncMock()
@@ -612,10 +668,11 @@ class TestCampfireAdapterSendMessage:
 
         await adapter.send_message(msg)
 
+        # Markdown converts plain text to HTML paragraphs
         mock_session.post.assert_called_once_with(
             "https://chat.example.com/rooms/1/123-abc/messages",
-            data="Hello from bot!",
-            headers={"Content-Type": "text/plain; charset=utf-8"},
+            data="<p>Hello from bot!</p>",
+            headers={"Content-Type": "text/html; charset=utf-8"},
         )
 
     @pytest.mark.asyncio
