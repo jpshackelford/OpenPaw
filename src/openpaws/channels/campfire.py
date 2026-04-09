@@ -130,23 +130,25 @@ class CampfireAdapter(ChannelAdapter):
 
         return send_status
 
-    def _create_incoming_message(self, payload: dict) -> IncomingMessage:
-        """Convert Campfire webhook payload to IncomingMessage."""
+    def _parse_webhook_payload(self, payload: dict) -> tuple[str, str, dict, dict, dict]:
+        """Parse webhook payload into room_id, message_id, and raw components."""
         user = payload.get("user", {})
         room = payload.get("room", {})
         message = payload.get("message", {})
-        body = message.get("body", {})
         room_path = room.get("path", "")
-
         room_id = self._extract_room_id(room_path) or str(room.get("id", ""))
         message_id = str(message.get("id", ""))
+        return room_id, message_id, user, room, message
 
+    def _create_incoming_message(self, payload: dict) -> IncomingMessage:
+        """Convert Campfire webhook payload to IncomingMessage."""
+        room_id, message_id, user, room, message = self._parse_webhook_payload(payload)
         return IncomingMessage(
             channel_type=self.channel_type,
             channel_id=room_id,
             user_id=str(user.get("id", "")),
             user_name=user.get("name", ""),
-            text=body.get("plain", ""),
+            text=message.get("body", {}).get("plain", ""),
             thread_id=message_id,
             is_mention=True,
             is_dm=False,
