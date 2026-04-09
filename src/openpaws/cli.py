@@ -895,9 +895,11 @@ def _campfire_print_summary(
     url: str, bot_key: str, room_id: str, webhook_port: int
 ) -> None:
     """Print final setup summary."""
-    click.echo(_CAMPFIRE_SUMMARY.format(
-        sep="═" * 40, url=url, bot_key=bot_key, room_id=room_id, port=webhook_port
-    ))
+    click.echo(
+        _CAMPFIRE_SUMMARY.format(
+            sep="═" * 40, url=url, bot_key=bot_key, room_id=room_id, port=webhook_port
+        )
+    )
 
 
 def _campfire_wizard_header(url: str) -> str:

@@ -146,9 +146,14 @@ class CampfireAdapter(ChannelAdapter):
         """Convert Campfire webhook payload to IncomingMessage."""
         room_id, msg_id, user, room, message = self._parse_webhook_payload(payload)
         return IncomingMessage(
-            channel_type=self.channel_type, channel_id=room_id, thread_id=msg_id,
-            user_id=str(user.get("id", "")), user_name=user.get("name", ""),
-            text=message.get("body", {}).get("plain", ""), is_mention=True, is_dm=False,
+            channel_type=self.channel_type,
+            channel_id=room_id,
+            thread_id=msg_id,
+            user_id=str(user.get("id", "")),
+            user_name=user.get("name", ""),
+            text=message.get("body", {}).get("plain", ""),
+            is_mention=True,
+            is_dm=False,
             raw_event={"user": user, "room": room, "message": message},
             on_processing_start=self._make_processing_callback(room_id, msg_id),
             send_status=self._make_status_callback(room_id, msg_id),
@@ -186,9 +191,7 @@ class CampfireAdapter(ChannelAdapter):
         """Create a new IncomingMessage with context prepended to the text."""
         return replace(incoming, text=f"{context_text}{incoming.text}")
 
-    async def _send_error_response(
-        self, channel_id: str, error: Exception
-    ) -> None:
+    async def _send_error_response(self, channel_id: str, error: Exception) -> None:
         """Try to send an error message back to Campfire."""
         try:
             error_msg = OutgoingMessage(
@@ -255,7 +258,9 @@ class CampfireAdapter(ChannelAdapter):
         await self._start_web_server()
         self._running = True
         port, path = self._config.webhook_port, self._config.webhook_path
-        logger.info(f"Campfire adapter started - webhook on http://0.0.0.0:{port}{path}")
+        logger.info(
+            f"Campfire adapter started - webhook on http://0.0.0.0:{port}{path}"
+        )
 
     async def _cleanup_resources(self) -> None:
         """Clean up all adapter resources."""

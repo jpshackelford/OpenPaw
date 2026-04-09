@@ -314,6 +314,7 @@ class TestCampfireAdapterWebhookHandler:
         The webhook now returns 204 immediately and processes the message
         in the background, sending responses via the Campfire API.
         """
+
         async def handler(msg):
             return f"Response to: {msg.text}"
 
@@ -338,6 +339,7 @@ class TestCampfireAdapterWebhookHandler:
     @pytest.mark.asyncio
     async def test_handle_webhook_no_response(self, adapter):
         """Test webhook handler returns 204 when handler returns None."""
+
         async def handler(msg):
             return None
 
@@ -372,6 +374,7 @@ class TestCampfireAdapterWebhookHandler:
     @pytest.mark.asyncio
     async def test_handle_webhook_invalid_json(self, adapter):
         """Test webhook returns 400 on invalid JSON."""
+
         async def handler(msg):
             return "Response"
 
@@ -391,6 +394,7 @@ class TestCampfireAdapterWebhookHandler:
         The webhook acknowledges immediately with 204. Handler errors
         are processed asynchronously and logged, not returned in the response.
         """
+
         async def handler(msg):
             raise RuntimeError("Handler failed")
 

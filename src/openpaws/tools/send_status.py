@@ -51,8 +51,7 @@ class SendStatusAction(Action):
 
     message: str = Field(
         description=(
-            "The status message to send to the user "
-            "(e.g., 'I'm working on that...')"
+            "The status message to send to the user (e.g., 'I'm working on that...')"
         )
     )
 
@@ -162,15 +161,19 @@ class SendStatusTool(ToolDefinition[SendStatusAction, SendStatusObservation]):
 
     @classmethod
     def create(
-        cls, conv_state: "ConversationState | None" = None, **params  # noqa: ARG003
+        cls,
+        conv_state: "ConversationState | None" = None,
+        **params,  # noqa: ARG003
     ) -> Sequence[Self]:
         """Create SendStatusTool instance."""
         if params:
             raise ValueError(f"SendStatusTool doesn't accept: {list(params.keys())}")
-        return [cls(
-            description=SEND_STATUS_DESCRIPTION,
-            action_type=SendStatusAction,
-            observation_type=SendStatusObservation,
-            executor=SendStatusExecutor(),
-            annotations=cls._make_annotations(),
-        )]
+        return [
+            cls(
+                description=SEND_STATUS_DESCRIPTION,
+                action_type=SendStatusAction,
+                observation_type=SendStatusObservation,
+                executor=SendStatusExecutor(),
+                annotations=cls._make_annotations(),
+            )
+        ]

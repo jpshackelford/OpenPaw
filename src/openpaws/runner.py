@@ -292,8 +292,13 @@ class ConversationRunner:
                 unregister_send_callback(str(conv.state.id))
 
     async def run_prompt(
-        self, group_name: str, prompt: str, *, conversation_id: UUID | None = None,
-        callbacks: list | None = None, send_callback: SendCallback | None = None,
+        self,
+        group_name: str,
+        prompt: str,
+        *,
+        conversation_id: UUID | None = None,
+        callbacks: list | None = None,
+        send_callback: SendCallback | None = None,
     ) -> ConversationResult:
         """Run a conversation with a prompt for a specific group."""
         group = self.config.groups.get(group_name)

@@ -511,7 +511,8 @@ class Daemon:
     def _build_campfire_config(self, channel_config) -> CampfireConfig:
         """Build CampfireConfig from channel config."""
         return CampfireConfig(
-            base_url=channel_config.base_url, bot_key=channel_config.bot_key,
+            base_url=channel_config.base_url,
+            bot_key=channel_config.bot_key,
             webhook_port=channel_config.webhook_port,
             webhook_path=channel_config.webhook_path,
             context_messages=channel_config.context_messages,
