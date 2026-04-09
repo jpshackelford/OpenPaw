@@ -347,41 +347,25 @@ class CampfireAdapter(ChannelAdapter):
         limited = messages[-self._config.context_messages :]
         return list(reversed(limited))
 
+    def _format_single_context_message(self, msg: dict) -> str:
+        """Format a single context message for the prompt."""
+        creator = msg.get("creator", {})
+        name = creator.get("name", "Unknown")
+        if creator.get("is_bot", False):
+            name = f"{name} (bot)"
+        text = msg.get("body", {}).get("plain", "")
+        return f"**{name}**: {text}"
+
     def _format_context_for_prompt(
         self, messages: list[dict], current_user: str
     ) -> str:
-        """Format conversation context messages into a prompt prefix.
-
-        Args:
-            messages: List of message dicts from fetch_room_context
-            current_user: Name of the user who sent the current message
-
-        Returns:
-            Formatted string with conversation context
-        """
+        """Format conversation context messages into a prompt prefix."""
         if not messages:
             return ""
-
-        lines = ["Here is the recent conversation context from this chat room:", ""]
-        for msg in messages:
-            creator = msg.get("creator", {})
-            name = creator.get("name", "Unknown")
-            is_bot = creator.get("is_bot", False)
-            body = msg.get("body", {})
-            text = body.get("plain", "")
-
-            # Mark bot messages clearly
-            if is_bot:
-                name = f"{name} (bot)"
-
-            lines.append(f"**{name}**: {text}")
-
-        lines.append("")
-        lines.append("---")
-        lines.append(f"Now {current_user} says:")
-        lines.append("")
-
-        return "\n".join(lines)
+        header = "Here is the recent conversation context from this chat room:\n"
+        body = "\n".join(self._format_single_context_message(m) for m in messages)
+        footer = f"\n\n---\nNow {current_user} says:\n"
+        return f"{header}\n{body}{footer}"
 
     async def send_message(self, message: OutgoingMessage) -> None:
         """Send a message to a Campfire room."""

@@ -18,32 +18,31 @@ from openpaws.scheduler import ScheduledTask
 from openpaws.storage import Storage, TaskState
 
 
-def _confirm(prompt: str, default: bool = True) -> bool:
-    """Prompt for yes/no confirmation, handling CR and LF properly.
-
-    Uses raw terminal mode to read single character, avoiding issues
-    where Enter key sends CR instead of LF.
-    """
-    suffix = " [Y/n]: " if default else " [y/N]: "
-    click.echo(prompt + suffix, nl=False)
-
+def _read_single_char() -> str:
+    """Read a single character from stdin using raw terminal mode."""
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
-        ch = sys.stdin.read(1)
+        return sys.stdin.read(1)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
-    click.echo()  # Print newline after input
 
+def _parse_yes_no(ch: str, default: bool) -> bool:
+    """Parse a character as yes/no response."""
     if ch in ("\r", "\n", ""):
         return default
-    if ch.lower() == "y":
-        return True
-    if ch.lower() == "n":
-        return False
-    return default
+    return {"y": True, "n": False}.get(ch.lower(), default)
+
+
+def _confirm(prompt: str, default: bool = True) -> bool:
+    """Prompt for yes/no confirmation, handling CR and LF properly."""
+    suffix = " [Y/n]: " if default else " [y/N]: "
+    click.echo(prompt + suffix, nl=False)
+    ch = _read_single_char()
+    click.echo()
+    return _parse_yes_no(ch, default)
 
 
 def _handle_prompt_char(ch: str, result: list[str]) -> bool:
@@ -742,14 +741,17 @@ def _campfire_guide_bot_creation(  # length-ok
     click.echo()
 
 
-def _campfire_prompt_bot_key(room_id: str | None) -> tuple[str, str | None]:
-    """Prompt user for bot key (or curl command) and extract info."""
+def _campfire_prompt_bot_key_header() -> None:
+    """Print the header for bot key prompt step."""
     click.echo("─" * 40)
     click.echo("Step 2: Enter Bot Information")
     click.echo("─" * 40)
-    click.echo()
-    click.echo("Paste one of the curl commands from Campfire, or just the bot key:")
-    click.echo()
+    click.echo("\nPaste one of the curl commands from Campfire, or just the bot key:\n")
+
+
+def _campfire_prompt_bot_key(room_id: str | None) -> tuple[str, str | None]:
+    """Prompt user for bot key (or curl command) and extract info."""
+    _campfire_prompt_bot_key_header()
     user_input = _prompt("Curl command or bot key").strip()
 
     parsed = _parse_campfire_curl(user_input)
@@ -757,9 +759,7 @@ def _campfire_prompt_bot_key(room_id: str | None) -> tuple[str, str | None]:
         _, parsed_room_id, bot_key = parsed
         click.echo(f"   ✓ Extracted bot key: {bot_key}")
         click.echo(f"   ✓ Extracted room ID: {parsed_room_id}")
-        if not room_id:
-            room_id = parsed_room_id
-        return bot_key, room_id
+        return bot_key, room_id or parsed_room_id
 
     if "-" not in user_input:
         click.echo("   ⚠️  Bot key should be in format: ID-TOKEN (e.g., 2-rk2SGfi9lZW0)")
