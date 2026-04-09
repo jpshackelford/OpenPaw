@@ -393,37 +393,32 @@ class CampfireAdapter(ChannelAdapter):
         bot_key = self._config.bot_key
         return f"{base}/rooms/{room_id}/{bot_key}/messages/{message_id}/boosts"
 
-    async def add_reaction(self, room_id: str, message_id: str, emoji: str) -> None:
-        """Add an emoji reaction (boost) to a message.
+    async def _handle_reaction_response(
+        self, resp, message_id: str, emoji: str
+    ) -> None:
+        """Handle the response from a reaction (boost) API call."""
+        if resp.status == 201:
+            logger.debug(f"Added {emoji} reaction to message {message_id}")
+        elif resp.status == 404:
+            logger.warning(
+                f"Could not add reaction - message {message_id} not found "
+                f"or bot boosts API not available"
+            )
+        else:
+            body = await resp.text()
+            logger.warning(f"Failed to add reaction: {resp.status} - {body}")
 
-        Args:
-            room_id: The room containing the message
-            message_id: The message to react to
-            emoji: The emoji to add (e.g., "👀")
-        """
+    async def add_reaction(self, room_id: str, message_id: str, emoji: str) -> None:
+        """Add an emoji reaction (boost) to a message."""
         if not self._http_session:
             raise RuntimeError("Campfire adapter not started")
-
         url = self._build_boost_url(room_id, message_id)
-
         try:
             async with self._http_session.post(
-                url,
-                data=emoji,
-                headers={"Content-Type": "text/plain; charset=utf-8"},
+                url, data=emoji, headers={"Content-Type": "text/plain; charset=utf-8"}
             ) as resp:
-                if resp.status == 201:
-                    logger.debug(f"Added {emoji} reaction to message {message_id}")
-                elif resp.status == 404:
-                    logger.warning(
-                        f"Could not add reaction - message {message_id} not found "
-                        f"or bot boosts API not available"
-                    )
-                else:
-                    body = await resp.text()
-                    logger.warning(f"Failed to add reaction: {resp.status} - {body}")
+                await self._handle_reaction_response(resp, message_id, emoji)
         except Exception as e:
-            # Don't fail message processing if reaction fails
             logger.warning(f"Could not add reaction to message {message_id}: {e}")
 
     def is_running(self) -> bool:

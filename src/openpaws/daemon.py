@@ -333,29 +333,27 @@ class Daemon:
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, lambda s=sig: signal_handler(s))
 
+    def _get_task_adapter(self, task) -> tuple | None:
+        """Get the adapter and group for a task, or None if unavailable."""
+        group = self.config.groups.get(task.config.group)
+        if not group:
+            logger.warning(f"Task '{task.config.name}' references unknown group")
+            return None
+        adapter = self._channel_adapters_by_type.get(group.channel)
+        if not adapter or not adapter.is_running():
+            logger.warning(f"Adapter for '{group.channel}' not available")
+            return None
+        return adapter, group
+
     async def _send_task_result_to_channel(self, task, message: str) -> None:
         """Send task result to the task's configured channel."""
-        task_name = task.config.name
-        group_name = task.config.group
-        group = self.config.groups.get(group_name)
-        if not group:
-            logger.warning(f"Task '{task_name}' references unknown group: {group_name}")
+        result = self._get_task_adapter(task)
+        if not result:
             return
-
-        channel = group.channel
-        adapter = self._channel_adapters_by_type.get(channel)
-        if not adapter:
-            logger.warning(f"No adapter for channel '{channel}' (task: {task_name})")
-            return
-
-        if not adapter.is_running():
-            logger.warning(f"Adapter '{channel}' not running, skipping task result")
-            return
-
-        outgoing = OutgoingMessage(channel_id=group.chat_id, text=message)
+        adapter, group = result
         try:
-            await adapter.send_message(outgoing)
-            logger.info(f"Task '{task_name}' sent to {channel}:{group.chat_id}")
+            await adapter.send_message(OutgoingMessage(channel_id=group.chat_id, text=message))
+            logger.info(f"Task '{task.config.name}' sent to {group.channel}:{group.chat_id}")
         except Exception as e:
             logger.error(f"Failed to send task result to channel: {e}")
 
@@ -498,20 +496,24 @@ class Daemon:
             logger.error(f"Invalid Gmail config: {e}")
             return None
 
+    def _validate_campfire_config(self, cfg) -> bool:
+        """Validate campfire channel config has required fields."""
+        if not cfg.base_url:
+            logger.warning("Campfire channel missing base_url, skipping")
+            return False
+        if not cfg.bot_key:
+            logger.warning("Campfire channel missing bot_key, skipping")
+            return False
+        return True
+
     def _create_campfire_adapter(self, channel_config) -> CampfireAdapter | None:
         """Create a Campfire adapter from channel config."""
-        if not channel_config.base_url:
-            logger.warning("Campfire channel missing base_url, skipping")
-            return None
-        if not channel_config.bot_key:
-            logger.warning("Campfire channel missing bot_key, skipping")
+        if not self._validate_campfire_config(channel_config):
             return None
         try:
             config = CampfireConfig(
-                base_url=channel_config.base_url,
-                bot_key=channel_config.bot_key,
-                webhook_port=channel_config.webhook_port,
-                webhook_path=channel_config.webhook_path,
+                base_url=channel_config.base_url, bot_key=channel_config.bot_key,
+                webhook_port=channel_config.webhook_port, webhook_path=channel_config.webhook_path,
                 context_messages=channel_config.context_messages,
             )
             return CampfireAdapter(config)
