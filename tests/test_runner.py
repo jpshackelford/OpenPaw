@@ -157,9 +157,8 @@ class TestConversationRunner:
         runner = ConversationRunner(config, base_dir=temp_base_dir)
 
         # Clear LLM_BASE_URL to ensure we use the config value
-        with patch.dict(
-            os.environ, {"ANTHROPIC_API_KEY": "test-key", "LLM_BASE_URL": ""}, clear=True
-        ):
+        env = {"ANTHROPIC_API_KEY": "test-key", "LLM_BASE_URL": ""}
+        with patch.dict(os.environ, env, clear=True):
             llm = runner._create_llm()
 
             assert llm.base_url == "http://localhost:4000"

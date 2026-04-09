@@ -602,17 +602,23 @@ def _campfire_http_error_to_result(e) -> tuple[bool, str]:
 def _build_campfire_request(base_url: str, room_id: str, bot_key: str):
     """Build HTTP request for testing Campfire connection."""
     import urllib.request
+
     url = f"{base_url}/rooms/{room_id}/{bot_key}/messages"
     data = "🐾 OpenPaws connected successfully!".encode()
-    return urllib.request.Request(url, data=data, headers={"Content-Type": "text/plain; charset=utf-8"})
+    headers = {"Content-Type": "text/plain; charset=utf-8"}
+    return urllib.request.Request(url, data=data, headers=headers)
 
 
-def _test_campfire_bot_key(base_url: str, room_id: str, bot_key: str) -> tuple[bool, str]:
+def _test_campfire_bot_key(
+    base_url: str, room_id: str, bot_key: str
+) -> tuple[bool, str]:
     """Test if a bot key is valid and room exists."""
     import urllib.error
     import urllib.request
+
+    req = _build_campfire_request(base_url, room_id, bot_key)
     try:
-        with urllib.request.urlopen(_build_campfire_request(base_url, room_id, bot_key), timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:
             return (True, "success") if resp.status == 201 else (False, "error")
     except urllib.error.HTTPError as e:
         return _campfire_http_error_to_result(e)
@@ -863,12 +869,7 @@ def _campfire_save_config(  # length-ok
     click.echo(f"   ✅ Configuration saved to: {_get_config_file()}")
 
 
-def _campfire_print_summary(
-    url: str, bot_key: str, room_id: str, webhook_port: int
-) -> None:
-    """Print final setup summary."""
-    sep = "═" * 40
-    click.echo(f"""
+_CAMPFIRE_SUMMARY = """
 {sep}
 🎉 Campfire Setup Complete!
 {sep}
@@ -877,7 +878,7 @@ Configuration:
   • Campfire URL: {url}
   • Bot Key: {bot_key}
   • Room ID: {room_id}
-  • Webhook: http://localhost:{webhook_port}/webhook
+  • Webhook: http://localhost:{port}/webhook
 
 Next steps:
   1. Start OpenPaws:  openpaws start
@@ -887,7 +888,24 @@ Useful commands:
   openpaws status    # Check if running
   openpaws logs -f   # Follow logs
   openpaws stop      # Stop daemon
-""")
+"""
+
+
+def _campfire_print_summary(
+    url: str, bot_key: str, room_id: str, webhook_port: int
+) -> None:
+    """Print final setup summary."""
+    click.echo(_CAMPFIRE_SUMMARY.format(
+        sep="═" * 40, url=url, bot_key=bot_key, room_id=room_id, port=webhook_port
+    ))
+
+
+def _campfire_wizard_header(url: str) -> str:
+    """Print wizard header and normalize URL."""
+    click.echo("\n🏕️  Campfire Setup Wizard\n" + "═" * 40 + "\n")
+    url = _campfire_normalize_url(url)
+    click.echo(f"\n📍 Using Campfire at: {url}\n")
+    return url
 
 
 @setup.command("campfire")
@@ -898,23 +916,12 @@ Useful commands:
 @click.option("--no-browser", is_flag=True, help="Don't open browser automatically")
 def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
     """Interactive setup wizard for Campfire integration."""
-    click.echo()
-    click.echo("🏕️  Campfire Setup Wizard")
-    click.echo("═" * 40)
-    click.echo()
-
-    url = _campfire_normalize_url(url)
-    click.echo()
-    click.echo(f"📍 Using Campfire at: {url}")
-    click.echo()
-
+    url = _campfire_wizard_header(url)
     _campfire_check_status(url, no_browser)
     bot_key, room_id = _campfire_check_existing_key(url, bot_key, room_id)
-
     if not bot_key:
         _campfire_guide_bot_creation(url, webhook_port, no_browser)
         bot_key, room_id = _campfire_prompt_bot_key(room_id)
-
     room_id = _campfire_find_room_id(url, bot_key, room_id)
     _, room_id = _campfire_test_connection(url, room_id, bot_key)
     _campfire_save_config(url, bot_key, room_id, webhook_port)

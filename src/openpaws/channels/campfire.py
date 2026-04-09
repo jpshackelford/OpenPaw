@@ -130,7 +130,9 @@ class CampfireAdapter(ChannelAdapter):
 
         return send_status
 
-    def _parse_webhook_payload(self, payload: dict) -> tuple[str, str, dict, dict, dict]:
+    def _parse_webhook_payload(
+        self, payload: dict
+    ) -> tuple[str, str, dict, dict, dict]:
         """Parse webhook payload into room_id, message_id, and raw components."""
         user = payload.get("user", {})
         room = payload.get("room", {})
@@ -287,11 +289,13 @@ class CampfireAdapter(ChannelAdapter):
     def _handle_fetch_error(self, status: int, body: str) -> None:
         """Log appropriate error for fetch messages failure."""
         if status == 404:
-            logger.warning("Bot read API not available (404). Requires Campfire PR #190.")
+            logger.warning("Bot read API not available (404). Needs Campfire PR #190")
         else:
             logger.error(f"Failed to fetch room context: {status} - {body}")
 
-    async def _fetch_messages_from_api(self, url: str, params: dict) -> list[dict] | None:
+    async def _fetch_messages_from_api(
+        self, url: str, params: dict
+    ) -> list[dict] | None:
         """Fetch messages from the API and return them or None on error."""
         try:
             async with self._http_session.get(url, params=params) as resp:
@@ -344,7 +348,8 @@ class CampfireAdapter(ChannelAdapter):
     async def _handle_send_response(self, resp, channel_id: str) -> None:
         """Handle response from message send API."""
         if resp.status == 201:
-            logger.info(f"Sent message to room {channel_id}: {resp.headers.get('Location', '')}")
+            location = resp.headers.get("Location", "")
+            logger.info(f"Sent message to room {channel_id}: {location}")
         else:
             body = await resp.text()
             logger.error(f"Failed to send message: {resp.status} - {body}")
@@ -355,8 +360,9 @@ class CampfireAdapter(ChannelAdapter):
         if not self._http_session:
             raise RuntimeError("Campfire adapter not started")
         url = self._build_message_url(message.channel_id)
+        headers = {"Content-Type": "text/plain; charset=utf-8"}
         async with self._http_session.post(
-            url, data=message.text, headers={"Content-Type": "text/plain; charset=utf-8"}
+            url, data=message.text, headers=headers
         ) as resp:
             await self._handle_send_response(resp, message.channel_id)
 

@@ -352,8 +352,10 @@ class Daemon:
             return
         adapter, group = result
         try:
-            await adapter.send_message(OutgoingMessage(channel_id=group.chat_id, text=message))
-            logger.info(f"Task '{task.config.name}' sent to {group.channel}:{group.chat_id}")
+            outgoing = OutgoingMessage(channel_id=group.chat_id, text=message)
+            await adapter.send_message(outgoing)
+            name = task.config.name
+            logger.info(f"Task '{name}' sent to {group.channel}:{group.chat_id}")
         except Exception as e:
             logger.error(f"Failed to send task result to channel: {e}")
 
@@ -506,17 +508,21 @@ class Daemon:
             return False
         return True
 
+    def _build_campfire_config(self, channel_config) -> CampfireConfig:
+        """Build CampfireConfig from channel config."""
+        return CampfireConfig(
+            base_url=channel_config.base_url, bot_key=channel_config.bot_key,
+            webhook_port=channel_config.webhook_port,
+            webhook_path=channel_config.webhook_path,
+            context_messages=channel_config.context_messages,
+        )
+
     def _create_campfire_adapter(self, channel_config) -> CampfireAdapter | None:
         """Create a Campfire adapter from channel config."""
         if not self._validate_campfire_config(channel_config):
             return None
         try:
-            config = CampfireConfig(
-                base_url=channel_config.base_url, bot_key=channel_config.bot_key,
-                webhook_port=channel_config.webhook_port, webhook_path=channel_config.webhook_path,
-                context_messages=channel_config.context_messages,
-            )
-            return CampfireAdapter(config)
+            return CampfireAdapter(self._build_campfire_config(channel_config))
         except ValueError as e:
             logger.error(f"Invalid Campfire config: {e}")
             return None

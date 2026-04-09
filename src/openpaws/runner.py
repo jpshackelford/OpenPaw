@@ -201,7 +201,9 @@ class ConversationRunner:
             condenser=get_default_condenser(
                 llm=self.llm.model_copy(update={"usage_id": "condenser"})
             ),
-            system_prompt_kwargs={"custom_instructions": self._build_custom_instructions()},
+            system_prompt_kwargs={
+                "custom_instructions": self._build_custom_instructions()
+            },
         )
 
     def _get_group_workspace(self, group: GroupConfig) -> Path:
@@ -267,6 +269,11 @@ class ConversationRunner:
             error=str(e),
         )
 
+    def _register_callback(self, conv, send_callback: SendCallback | None) -> None:
+        """Register send callback if provided."""
+        if send_callback:
+            register_send_callback(str(conv.state.id), send_callback)
+
     async def _execute_prompt(
         self, group: GroupConfig, prompt: str, conversation_id, callbacks, send_callback
     ) -> ConversationResult:
@@ -274,9 +281,9 @@ class ConversationRunner:
         events: list[Event] = []
         conv = None
         try:
-            conv = self._create_conversation(group, conversation_id, self._build_callbacks(events, callbacks))
-            if send_callback:
-                register_send_callback(str(conv.state.id), send_callback)
+            cbs = self._build_callbacks(events, callbacks)
+            conv = self._create_conversation(group, conversation_id, cbs)
+            self._register_callback(conv, send_callback)
             return self._run_conversation(conv, prompt, events)
         except Exception as e:
             return self._conversation_error(e, events)
