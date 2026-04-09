@@ -46,36 +46,38 @@ def _confirm(prompt: str, default: bool = True) -> bool:
     return default
 
 
+def _handle_prompt_char(ch: str, result: list[str]) -> bool:
+    """Handle a single character in prompt input. Returns True if done."""
+    if ch in ("\r", "\n"):
+        return True
+    if ch == "\x7f" and result:  # Backspace
+        result.pop()
+        click.echo("\b \b", nl=False)
+    elif ch == "\x03":  # Ctrl+C
+        raise KeyboardInterrupt
+    elif ch >= " ":  # Printable character
+        result.append(ch)
+        click.echo(ch, nl=False)
+    return False
+
+
 def _prompt(text: str, default: str = "") -> str:
     """Prompt for text input, handling CR and LF properly."""
-    if default:
-        click.echo(f"{text} [{default}]: ", nl=False)
-    else:
-        click.echo(f"{text}: ", nl=False)
+    suffix = f" [{default}]: " if default else ": "
+    click.echo(f"{text}{suffix}", nl=False)
 
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
-    result = []
+    result: list[str] = []
 
     try:
-        tty.setcbreak(fd)  # Use cbreak mode to allow line editing
-        while True:
-            ch = sys.stdin.read(1)
-            if ch in ("\r", "\n"):
-                break
-            elif ch == "\x7f":  # Backspace
-                if result:
-                    result.pop()
-                    click.echo("\b \b", nl=False)
-            elif ch == "\x03":  # Ctrl+C
-                raise KeyboardInterrupt
-            elif ch >= " ":  # Printable character
-                result.append(ch)
-                click.echo(ch, nl=False)
+        tty.setcbreak(fd)
+        while not _handle_prompt_char(sys.stdin.read(1), result):
+            pass
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
-    click.echo()  # Print newline after input
+    click.echo()
     return "".join(result) or default
 
 
@@ -586,40 +588,33 @@ def _check_campfire_setup_complete(base_url: str) -> bool:
         return False
 
 
+def _campfire_http_error_to_result(e) -> tuple[bool, str]:
+    """Convert HTTP error to (success, message) tuple."""
+    if e.code == 302:
+        return False, "invalid_key"
+    if e.code == 500:
+        return False, "invalid_room"
+    return False, f"http_{e.code}"
+
+
 def _test_campfire_bot_key(
     base_url: str, room_id: str, bot_key: str
 ) -> tuple[bool, str]:
-    """Test if a bot key is valid and room exists.
-
-    Returns (success, message) tuple.
-    - (True, "success") if bot key is valid and room exists
-    - (False, "invalid_key") if bot key is invalid
-    - (False, "invalid_room") if bot key is valid but room doesn't exist
-    - (False, "error") for other errors
-    """
+    """Test if a bot key is valid and room exists."""
     import urllib.error
     import urllib.request
 
     url = f"{base_url}/rooms/{room_id}/{bot_key}/messages"
     data = "🐾 OpenPaws connected successfully!".encode()
+    req = urllib.request.Request(
+        url, data=data, headers={"Content-Type": "text/plain; charset=utf-8"}
+    )
 
     try:
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers={"Content-Type": "text/plain; charset=utf-8"},
-            method="POST",
-        )
         with urllib.request.urlopen(req, timeout=10) as resp:
-            if resp.status == 201:
-                return True, "success"
-            return False, "error"
+            return (True, "success") if resp.status == 201 else (False, "error")
     except urllib.error.HTTPError as e:
-        if e.code == 302:
-            return False, "invalid_key"
-        elif e.code == 500:
-            return False, "invalid_room"
-        return False, f"http_{e.code}"
+        return _campfire_http_error_to_result(e)
     except urllib.error.URLError as e:
         return False, f"connection_error: {e.reason}"
     except Exception as e:
