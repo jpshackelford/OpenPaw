@@ -1,4 +1,4 @@
-# OpenPaws 🐾
+# OpenPaw 🐾
 
 A lightweight, always-on AI assistant with scheduled tasks and chat connectors.
 
