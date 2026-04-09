@@ -8,6 +8,7 @@ from aiohttp import web
 
 from openpaws.channels.base import IncomingMessage, OutgoingMessage
 from openpaws.channels.campfire import (
+    MAX_CONTEXT_MESSAGES,
     CampfireAdapter,
     CampfireConfig,
     create_campfire_adapter,
@@ -859,7 +860,7 @@ class TestCampfireAdapterContext:
         """Test that we take the most recent N messages, not the oldest N.
 
         When API returns more messages than context_messages limit, we should
-        take the last N (most recent before the target) not the first N (oldest).
+        take the first N (most recent before the target) not the last N (oldest).
         """
         from aiohttp import ClientSession
 
@@ -893,12 +894,12 @@ class TestCampfireAdapterContext:
 
         messages = await adapter.fetch_room_context("1")
 
-        # Should get the 3 most recent (msg3, msg2, msg1 from API = last 3)
-        # Reversed to chronological order: msg1, msg2, msg3
+        # Should get the 3 most recent (msg5, msg4, msg3 from API = first 3)
+        # Reversed to chronological order: msg3, msg4, msg5
         assert len(messages) == 3
-        assert messages[0]["body"]["plain"] == "msg1"  # Oldest of the 3
-        assert messages[1]["body"]["plain"] == "msg2"
-        assert messages[2]["body"]["plain"] == "msg3"  # Most recent (before target)
+        assert messages[0]["body"]["plain"] == "msg3"  # Oldest of the 3
+        assert messages[1]["body"]["plain"] == "msg4"
+        assert messages[2]["body"]["plain"] == "msg5"  # Most recent (before target)
 
     @pytest.mark.asyncio
     async def test_fetch_room_context_404(self, adapter):
@@ -968,4 +969,42 @@ class TestCampfireAdapterContext:
             base_url="https://chat.example.com",
             bot_key="123-abc",
         )
-        assert config.context_messages == 10
+        assert config.context_messages == 20
+
+    @pytest.mark.asyncio
+    async def test_fetch_room_context_respects_hard_cap(self, config):
+        """Test that context is capped at MAX_CONTEXT_MESSAGES."""
+        from aiohttp import ClientSession
+
+        # Configure to want more than the hard cap
+        config.context_messages = MAX_CONTEXT_MESSAGES + 50
+        adapter = CampfireAdapter(config)
+
+        # API returns MAX_CONTEXT_MESSAGES + 10 messages
+        num_messages = MAX_CONTEXT_MESSAGES + 10
+        mock_messages = [
+            {"id": i, "body": {"plain": f"msg{i}"}, "creator": {"name": "A"}}
+            for i in range(num_messages, 0, -1)  # newest first
+        ]
+
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(
+            return_value={
+                "room": {"id": 1, "name": "General"},
+                "messages": mock_messages,
+                "pagination": {},
+            }
+        )
+
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__.return_value = mock_response
+        mock_cm.__aexit__.return_value = None
+
+        adapter._http_session = MagicMock(spec=ClientSession)
+        adapter._http_session.get.return_value = mock_cm
+
+        messages = await adapter.fetch_room_context("1")
+
+        # Should be capped at MAX_CONTEXT_MESSAGES
+        assert len(messages) == MAX_CONTEXT_MESSAGES

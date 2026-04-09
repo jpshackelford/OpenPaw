@@ -46,16 +46,16 @@ logger = logging.getLogger(__name__)
 ROOM_PATH_PATTERN = re.compile(r"/rooms/(\d+)/")
 
 # Default number of recent messages to include for context
-DEFAULT_CONTEXT_MESSAGES = 10
+DEFAULT_CONTEXT_MESSAGES = 20
 
+# Hard cap on context messages to prevent excessive token usage
+# 100 messages with 2 paragraphs each ≈ 23K tokens, well within modern LLM limits
+# Use context_messages config setting to control context size per deployment
+MAX_CONTEXT_MESSAGES = 100
 
 # Default webhook host - 127.0.0.1 for security (local only)
 # Use "0.0.0.0" when running in Docker and receiving webhooks from host
 DEFAULT_WEBHOOK_HOST = "127.0.0.1"
-
-# Maximum characters for conversation context to avoid LLM token limits
-# Roughly ~1000 tokens, leaving room for the actual message
-MAX_CONTEXT_CHARS = 4000
 
 
 @dataclass
@@ -352,8 +352,10 @@ class CampfireAdapter(ChannelAdapter):
         messages = await self._fetch_messages_from_api(url, params)
         if messages is None:
             return []
-        # API returns newest-first; take last N and reverse to chronological order
-        limited = messages[-self._config.context_messages :]
+        # Apply hard cap, then take configured amount
+        limit = min(self._config.context_messages, MAX_CONTEXT_MESSAGES)
+        # API returns newest-first; take first N (most recent) then reverse
+        limited = messages[:limit]
         return list(reversed(limited))
 
     def _format_single_context_message(self, msg: dict) -> str:
@@ -365,16 +367,6 @@ class CampfireAdapter(ChannelAdapter):
         text = msg.get("body", {}).get("plain", "")
         return f"**{name}**: {text}"
 
-    def _truncate_context_if_needed(self, context_text: str) -> str:
-        """Truncate context if it exceeds maximum length to avoid LLM token limits."""
-        if len(context_text) <= MAX_CONTEXT_CHARS:
-            return context_text
-        logger.warning(
-            f"Context truncated from {len(context_text)} to {MAX_CONTEXT_CHARS} chars"
-        )
-        # Keep the most recent part of the context (end of string)
-        return "...[earlier context truncated]...\n" + context_text[-MAX_CONTEXT_CHARS:]
-
     def _format_context_for_prompt(
         self, messages: list[dict], current_user: str
     ) -> str:
@@ -384,8 +376,7 @@ class CampfireAdapter(ChannelAdapter):
         header = "Here is the recent conversation context from this chat room:\n"
         body = "\n".join(self._format_single_context_message(m) for m in messages)
         footer = f"\n\n---\nNow {current_user} says:\n"
-        full_context = f"{header}\n{body}{footer}"
-        return self._truncate_context_if_needed(full_context)
+        return f"{header}\n{body}{footer}"
 
     async def _handle_send_response(self, resp, channel_id: str) -> None:
         """Handle response from message send API."""
