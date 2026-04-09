@@ -22,8 +22,12 @@
       "min_coverage": 84.3
     },
     "src/openpaws/cli.py": {
-      "min_coverage": 54.0,
-      "note": "Reduced from 84.8% due to Campfire wizard (requires TTY, hard to test)"
+      "min_coverage": 83.0,
+      "note": "Improved from 54% after moving Campfire wizard to separate module"
+    },
+    "src/openpaws/channels/campfire_setup.py": {
+      "min_coverage": 88.0,
+      "note": "Campfire setup wizard - some interactive flows require TTY"
     },
     "src/openpaws/config.py": {
       "min_coverage": 94.4
@@ -46,6 +50,10 @@
     },
     "src/openpaws/tools/send_status.py": {
       "min_coverage": 97.1
+    },
+    "src/openpaws/terminal.py": {
+      "min_coverage": 67.0,
+      "note": "RealTerminalInput requires TTY - MockTerminalInput is fully covered"
     }
   },
   "new_file_threshold": 80.0
