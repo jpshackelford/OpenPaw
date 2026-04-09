@@ -630,6 +630,22 @@ class TestCampfireMarkdownToHtml:
         assert "<table>" in result
         assert "<th>" in result or "<td>" in result
 
+    def test_html_injection_is_escaped(self, adapter):
+        """Raw HTML and script tags are escaped to prevent XSS attacks."""
+        dangerous_input = "Hello <script>alert('xss')</script> world"
+        result = adapter._markdown_to_html(dangerous_input)
+        # Script tag should be escaped, not executable
+        assert "<script>" not in result
+        assert "&lt;script&gt;" in result
+
+    def test_html_tags_are_escaped(self, adapter):
+        """All HTML tags in user input are escaped."""
+        input_with_html = "Check out <a href='evil.com'>this link</a>!"
+        result = adapter._markdown_to_html(input_with_html)
+        # Raw HTML tags should be escaped
+        assert "<a href=" not in result
+        assert "&lt;a href=" in result
+
 
 class TestCampfireAdapterSendMessage:
     """Tests for Campfire adapter send_message."""

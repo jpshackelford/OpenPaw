@@ -27,6 +27,7 @@ Note: Reading conversation context requires the bot read API (PR #190).
 """
 
 import asyncio
+import html
 import logging
 import re
 from dataclasses import dataclass, replace
@@ -399,10 +400,17 @@ class CampfireAdapter(ChannelAdapter):
             raise RuntimeError(f"Campfire API error: {resp.status}")
 
     def _markdown_to_html(self, text: str) -> str:
-        """Convert markdown text to HTML for Campfire's ActionText rendering."""
-        # Use fenced_code and tables extensions for better formatting
+        """Convert markdown text to HTML for Campfire's ActionText rendering.
+
+        Security: Escapes any raw HTML in the input to prevent XSS attacks.
+        The markdown library doesn't sanitize HTML by default, so we escape
+        HTML entities before conversion to ensure script tags and other
+        potentially dangerous HTML cannot be injected.
+        """
+        # Escape HTML to prevent XSS attacks before markdown conversion
+        safe_text = html.escape(text)
         return markdown.markdown(
-            text,
+            safe_text,
             extensions=["fenced_code", "tables", "nl2br"],
         )
 
