@@ -865,26 +865,27 @@ def _campfire_print_summary(
     url: str, bot_key: str, room_id: str, webhook_port: int
 ) -> None:
     """Print final setup summary."""
-    click.echo()
-    click.echo("═" * 40)
-    click.echo("🎉 Campfire Setup Complete!")
-    click.echo("═" * 40)
-    click.echo()
-    click.echo("Configuration:")
-    click.echo(f"  • Campfire URL: {url}")
-    click.echo(f"  • Bot Key: {bot_key}")
-    click.echo(f"  • Room ID: {room_id}")
-    click.echo(f"  • Webhook: http://localhost:{webhook_port}/webhook")
-    click.echo()
-    click.echo("Next steps:")
-    click.echo("  1. Start OpenPaws:  openpaws start")
-    click.echo("  2. In Campfire, @mention your bot to test")
-    click.echo()
-    click.echo("Useful commands:")
-    click.echo("  openpaws status    # Check if running")
-    click.echo("  openpaws logs -f   # Follow logs")
-    click.echo("  openpaws stop      # Stop daemon")
-    click.echo()
+    header = ["", "═" * 40, "🎉 Campfire Setup Complete!", "═" * 40, ""]
+    config = [
+        "Configuration:",
+        f"  • Campfire URL: {url}",
+        f"  • Bot Key: {bot_key}",
+        f"  • Room ID: {room_id}",
+        f"  • Webhook: http://localhost:{webhook_port}/webhook",
+    ]
+    next_steps = [
+        "", "Next steps:",
+        "  1. Start OpenPaws:  openpaws start",
+        "  2. In Campfire, @mention your bot to test",
+    ]
+    commands = [
+        "", "Useful commands:",
+        "  openpaws status    # Check if running",
+        "  openpaws logs -f   # Follow logs",
+        "  openpaws stop      # Stop daemon", "",
+    ]
+    for line in header + config + next_steps + commands:
+        click.echo(line)
 
 
 @setup.command("campfire")

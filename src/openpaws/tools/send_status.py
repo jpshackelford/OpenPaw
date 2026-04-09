@@ -108,43 +108,42 @@ the user know you've received their message and are working on it.
 Keep status messages brief and friendly."""
 
 
+def _run_async_callback(callback, message: str) -> None:
+    """Run an async callback, handling event loop conflicts."""
+    import asyncio
+    import concurrent.futures
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            pool.submit(asyncio.run, callback(message)).result()
+    except Exception:
+        asyncio.run(callback(message))
+
+
 class SendStatusExecutor(ToolExecutor):
     """Executor that sends status messages via callback looked up from registry."""
+
+    def _get_callback(self, conversation) -> callable | None:
+        """Look up the callback from the registry using conversation ID."""
+        if conversation and hasattr(conversation, "state"):
+            return get_send_callback(str(conversation.state.id))
+        return None
 
     def __call__(
         self,
         action: SendStatusAction,
         conversation: "BaseConversation | None" = None,
     ) -> SendStatusObservation:
-        # Look up the callback from the registry using conversation ID
-        send_callback = None
-        if conversation and hasattr(conversation, "state"):
-            conv_id = str(conversation.state.id)
-            send_callback = get_send_callback(conv_id)
+        send_callback = self._get_callback(conversation)
 
         if send_callback is None:
-            # No callback configured - just acknowledge
             return SendStatusObservation.from_text(
-                text="Status message logged (no channel configured).",
-                sent=False,
+                text="Status message logged (no channel configured).", sent=False
             )
 
-        # Run the async callback - use thread pool to avoid event loop conflicts
-        import asyncio
-        import concurrent.futures
-
-        try:
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                pool.submit(
-                    asyncio.run, send_callback(action.message)
-                ).result()
-        except Exception:
-            # Fallback: try running directly if thread pool fails
-            asyncio.run(send_callback(action.message))
-
+        _run_async_callback(send_callback, action.message)
         return SendStatusObservation.from_text(
-            text="Status message sent to user.",
-            sent=True,
+            text="Status message sent to user.", sent=True
         )
 
 
