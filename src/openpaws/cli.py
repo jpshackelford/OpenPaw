@@ -60,24 +60,27 @@ def _handle_prompt_char(ch: str, result: list[str]) -> bool:
     return False
 
 
-def _prompt(text: str, default: str = "") -> str:
-    """Prompt for text input, handling CR and LF properly."""
-    suffix = f" [{default}]: " if default else ": "
-    click.echo(f"{text}{suffix}", nl=False)
-
+def _read_line_raw() -> str:
+    """Read a line of input using raw terminal mode."""
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     result: list[str] = []
-
     try:
         tty.setcbreak(fd)
         while not _handle_prompt_char(sys.stdin.read(1), result):
             pass
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    return "".join(result)
 
+
+def _prompt(text: str, default: str = "") -> str:
+    """Prompt for text input, handling CR and LF properly."""
+    suffix = f" [{default}]: " if default else ": "
+    click.echo(f"{text}{suffix}", nl=False)
+    result = _read_line_raw()
     click.echo()
-    return "".join(result) or default
+    return result or default
 
 
 @click.group()

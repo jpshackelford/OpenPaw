@@ -23,7 +23,7 @@ Note: Reading conversation context requires the bot read API (PR #190).
 import asyncio
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from aiohttp import ClientSession, web
 
@@ -187,19 +187,7 @@ class CampfireAdapter(ChannelAdapter):
         self, incoming: IncomingMessage, context_text: str
     ) -> IncomingMessage:
         """Create a new IncomingMessage with context prepended to the text."""
-        return IncomingMessage(
-            channel_type=incoming.channel_type,
-            channel_id=incoming.channel_id,
-            user_id=incoming.user_id,
-            user_name=incoming.user_name,
-            text=f"{context_text}{incoming.text}",
-            thread_id=incoming.thread_id,
-            is_mention=incoming.is_mention,
-            is_dm=incoming.is_dm,
-            raw_event=incoming.raw_event,
-            on_processing_start=incoming.on_processing_start,
-            send_status=incoming.send_status,
-        )
+        return replace(incoming, text=f"{context_text}{incoming.text}")
 
     async def _send_error_response(
         self, channel_id: str, error: Exception
