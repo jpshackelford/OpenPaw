@@ -10,13 +10,23 @@ OpenPaws turns the OpenHands SDK from "run an agent when I call it" into "have a
 
 **Features:**
 - 📅 **Scheduled Tasks** - Cron-based recurring tasks that post results to chat
-- 💬 **Chat Connectors** - Campfire, Slack, Telegram, Gmail
+- 💬 **Chat Connectors** - Multiple platform adapters (see below)
 - 🔒 **Sandboxed Execution** - Runs agents in isolated environments
 - ⚡ **Minimal Config** - YAML config + small CLI
 
+## Chat Adapters
+
+| Adapter | Status | Setup Guide | Notes |
+|---------|--------|-------------|-------|
+| [Campfire](https://once.com/campfire) | ✅ Verified | [Campfire Setup](docs/CAMPFIRE_SETUP.md) | **Recommended** - Free, self-hosted, easiest setup |
+| [Slack](https://slack.com) | ⚠️ Untested | [Slack Setup](docs/SLACK_SETUP.md) | Requires Socket Mode app |
+| [Gmail](https://gmail.com) | ⚠️ Untested | [Gmail Setup](docs/GMAIL_SETUP.md) | Email-based interaction |
+
+> **New to OpenPaws?** Start with Campfire - it's free, runs locally in Docker, and has the simplest setup path.
+
 ## Quick Start with Campfire
 
-The easiest way to get started is with [Campfire](https://once.com/campfire), a free self-hosted chat app.
+The easiest way to get started is with [Campfire](https://once.com/campfire), a free self-hosted chat app that runs entirely on your machine.
 
 **Prerequisites:** Docker, Python 3.10+
 
@@ -138,10 +148,8 @@ Tasks run on a cron schedule and automatically post their results to the configu
 
 ## Documentation
 
-- [Campfire Setup](docs/CAMPFIRE_SETUP.md) - Complete Campfire integration guide
-- [Slack Setup](docs/SLACK_SETUP.md) - Slack integration guide
-- [Gmail Setup](docs/GMAIL_SETUP.md) - Gmail integration guide
 - [Design Doc](docs/DESIGN.md) - Architecture and comparison with NanoClaw
+- See [Chat Adapters](#chat-adapters) table above for setup guides
 
 ## Campfire Fork
 
