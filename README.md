@@ -189,10 +189,10 @@ once update campfire.localhost --image ghcr.io/basecamp/once-campfire
 
 Once [PR #190](https://github.com/basecamp/once-campfire/pull/190) is merged upstream, you can switch to the official image and conversation context will work automatically.
 
-## Why "OpenPaws"?
+## Why "OpenPaw"?
 
 - **Open** → OpenHands ecosystem
-- **Paws** → A paw has claws (inspired by [NanoClaw](https://github.com/qwibitai/nanoclaw)) and is a hand (OpenHands)
+- **Paw** → Paw, not claw (inspired by [NanoClaw](https://github.com/qwibitai/nanoclaw)) and is a default Open (OpenHands) not closed as OpenPaw is easier to extend.
 
 ## Status
 
