@@ -1,14 +1,18 @@
 """Tests for daemon process management."""
 
 import os
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from openpaws import daemon
+from openpaws.channels.base import OutgoingMessage
+from openpaws.config import Config, GroupConfig, TaskConfig
 from openpaws.daemon import (
     ENV_LOG_FILE,
     ENV_OPENPAWS_DIR,
     ENV_PID_FILE,
+    Daemon,
     format_uptime,
     get_daemon_status,
     get_log_file,
@@ -19,6 +23,7 @@ from openpaws.daemon import (
     remove_pid_file,
     write_pid_file,
 )
+from openpaws.scheduler import ScheduledTask
 
 
 @pytest.fixture
@@ -345,3 +350,283 @@ class TestEnvironmentVariables:
         assert pid_file_1 != pid_file_2
         assert pid_file_1.read_text() == "1001"
         assert pid_file_2.read_text() == "1002"
+
+
+class TestChannelAdapterRegistry:
+    """Tests for channel adapter registry functionality."""
+
+    def test_channel_adapters_by_type_initialized(self):
+        """Test that channel adapters registry is initialized."""
+        daemon_obj = Daemon()
+        assert daemon_obj._channel_adapters_by_type == {}
+        assert daemon_obj._channel_adapters == []
+
+    def test_register_adapter_adds_to_both_structures(self):
+        """Test that _register_adapter adds adapter to list and dict."""
+        daemon_obj = Daemon()
+        daemon_obj._channel_adapters = []
+        daemon_obj._channel_adapters_by_type = {}
+
+        mock_adapter = MagicMock()
+        mock_adapter.channel_type = "campfire"
+
+        daemon_obj._register_adapter(mock_adapter, "my-campfire")
+
+        assert mock_adapter in daemon_obj._channel_adapters
+        assert daemon_obj._channel_adapters_by_type["campfire"] is mock_adapter
+
+
+class TestDisabledTasks:
+    """Tests for task enabled/disabled functionality."""
+
+    def test_setup_scheduler_skips_disabled_tasks(self):
+        """Test that _setup_scheduler skips tasks with enabled=False."""
+        daemon_obj = Daemon()
+        daemon_obj.storage = MagicMock()
+        daemon_obj.config = Config(
+            tasks={
+                "enabled-task": TaskConfig(
+                    name="enabled-task",
+                    group="main",
+                    prompt="Do something",
+                    schedule="0 9 * * *",
+                    enabled=True,
+                ),
+                "disabled-task": TaskConfig(
+                    name="disabled-task",
+                    group="main",
+                    prompt="Do nothing",
+                    schedule="0 10 * * *",
+                    enabled=False,
+                ),
+            },
+        )
+
+        daemon_obj._setup_scheduler()
+
+        # Only the enabled task should be in the scheduler
+        assert "enabled-task" in daemon_obj.scheduler.tasks
+        assert "disabled-task" not in daemon_obj.scheduler.tasks
+
+    def test_setup_scheduler_all_disabled(self):
+        """Test _setup_scheduler when all tasks are disabled."""
+        daemon_obj = Daemon()
+        daemon_obj.storage = MagicMock()
+        daemon_obj.config = Config(
+            tasks={
+                "task1": TaskConfig(
+                    name="task1",
+                    group="main",
+                    prompt="Task 1",
+                    schedule="0 9 * * *",
+                    enabled=False,
+                ),
+                "task2": TaskConfig(
+                    name="task2",
+                    group="main",
+                    prompt="Task 2",
+                    schedule="0 10 * * *",
+                    enabled=False,
+                ),
+            },
+        )
+
+        daemon_obj._setup_scheduler()
+
+        assert len(daemon_obj.scheduler.tasks) == 0
+
+    def test_setup_scheduler_default_enabled(self):
+        """Test that tasks without explicit enabled field are scheduled."""
+        daemon_obj = Daemon()
+        daemon_obj.storage = MagicMock()
+        daemon_obj.config = Config(
+            tasks={
+                "default-task": TaskConfig(
+                    name="default-task",
+                    group="main",
+                    prompt="Default enabled task",
+                    schedule="0 9 * * *",
+                    # enabled defaults to True
+                ),
+            },
+        )
+
+        daemon_obj._setup_scheduler()
+
+        assert "default-task" in daemon_obj.scheduler.tasks
+
+
+class TestProactiveTaskMessaging:
+    """Tests for sending scheduled task results to channels."""
+
+    @pytest.fixture
+    def daemon_with_config(self):
+        """Create a Daemon with a minimal config for testing."""
+        daemon_obj = Daemon()
+        daemon_obj.config = Config(
+            groups={
+                "main": GroupConfig(
+                    name="main",
+                    channel="campfire",
+                    chat_id="42",
+                ),
+                "slack-group": GroupConfig(
+                    name="slack-group",
+                    channel="slack",
+                    chat_id="C123456",
+                ),
+            },
+            tasks={
+                "morning-news": TaskConfig(
+                    name="morning-news",
+                    group="main",
+                    prompt="Summarize today's news",
+                    schedule="0 9 * * *",
+                ),
+            },
+        )
+        daemon_obj._channel_adapters = []
+        daemon_obj._channel_adapters_by_type = {}
+        return daemon_obj
+
+    @pytest.fixture
+    def mock_campfire_adapter(self):
+        """Create a mock Campfire adapter."""
+        adapter = MagicMock()
+        adapter.channel_type = "campfire"
+        adapter.is_running.return_value = True
+        adapter.send_message = AsyncMock()
+        return adapter
+
+    @pytest.fixture
+    def mock_task(self):
+        """Create a mock scheduled task."""
+        task_config = TaskConfig(
+            name="morning-news",
+            group="main",
+            prompt="Summarize today's news",
+            schedule="0 9 * * *",
+        )
+        return ScheduledTask(config=task_config)
+
+    @pytest.mark.asyncio
+    async def test_send_task_result_success(
+        self, daemon_with_config, mock_campfire_adapter, mock_task
+    ):
+        """Test that task result is sent to the correct channel."""
+        daemon_obj = daemon_with_config
+        daemon_obj._channel_adapters_by_type["campfire"] = mock_campfire_adapter
+
+        await daemon_obj._send_task_result_to_channel(mock_task, "Today's top news...")
+
+        mock_campfire_adapter.send_message.assert_called_once()
+        call_args = mock_campfire_adapter.send_message.call_args[0][0]
+        assert isinstance(call_args, OutgoingMessage)
+        assert call_args.channel_id == "42"
+        assert call_args.text == "Today's top news..."
+
+    @pytest.mark.asyncio
+    async def test_send_task_result_unknown_group(self, daemon_with_config, mock_task):
+        """Test that unknown group logs warning and returns."""
+        daemon_obj = daemon_with_config
+        mock_task.config.group = "nonexistent"
+
+        # Should not raise, just log warning
+        await daemon_obj._send_task_result_to_channel(mock_task, "Message")
+
+    @pytest.mark.asyncio
+    async def test_send_task_result_no_adapter(self, daemon_with_config, mock_task):
+        """Test that missing adapter logs warning and returns."""
+        daemon_obj = daemon_with_config
+        # No adapter registered for 'campfire'
+
+        # Should not raise, just log warning
+        await daemon_obj._send_task_result_to_channel(mock_task, "Message")
+
+    @pytest.mark.asyncio
+    async def test_send_task_result_adapter_not_running(
+        self, daemon_with_config, mock_campfire_adapter, mock_task
+    ):
+        """Test that non-running adapter logs warning and returns."""
+        daemon_obj = daemon_with_config
+        mock_campfire_adapter.is_running.return_value = False
+        daemon_obj._channel_adapters_by_type["campfire"] = mock_campfire_adapter
+
+        await daemon_obj._send_task_result_to_channel(mock_task, "Message")
+
+        mock_campfire_adapter.send_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_task_result_send_failure(
+        self, daemon_with_config, mock_campfire_adapter, mock_task
+    ):
+        """Test that send failure is logged but doesn't raise."""
+        daemon_obj = daemon_with_config
+        mock_campfire_adapter.send_message.side_effect = RuntimeError("Network error")
+        daemon_obj._channel_adapters_by_type["campfire"] = mock_campfire_adapter
+
+        # Should not raise, just log error
+        await daemon_obj._send_task_result_to_channel(mock_task, "Message")
+
+    @pytest.mark.asyncio
+    async def test_execute_task_sends_result(self, daemon_with_config, mock_task):
+        """Test that _execute_task sends result to channel on success."""
+        daemon_obj = daemon_with_config
+
+        # Mock runner
+        mock_runner = MagicMock()
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.message = "Task completed successfully"
+        mock_runner.run_task = AsyncMock(return_value=mock_result)
+        daemon_obj._runner = mock_runner
+
+        # Mock the send method
+        daemon_obj._send_task_result_to_channel = AsyncMock()
+
+        result = await daemon_obj._execute_task(mock_task)
+
+        assert result == "Task completed successfully"
+        daemon_obj._send_task_result_to_channel.assert_called_once_with(
+            mock_task, "Task completed successfully"
+        )
+
+    @pytest.mark.asyncio
+    async def test_execute_task_no_send_on_failure(self, daemon_with_config, mock_task):
+        """Test that _execute_task does not send result on failure."""
+        daemon_obj = daemon_with_config
+
+        # Mock runner with failed result
+        mock_runner = MagicMock()
+        mock_result = MagicMock()
+        mock_result.success = False
+        mock_result.message = "Task failed"
+        mock_runner.run_task = AsyncMock(return_value=mock_result)
+        daemon_obj._runner = mock_runner
+
+        daemon_obj._send_task_result_to_channel = AsyncMock()
+
+        result = await daemon_obj._execute_task(mock_task)
+
+        assert result == "Task failed"
+        daemon_obj._send_task_result_to_channel.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_execute_task_no_send_on_empty_message(
+        self, daemon_with_config, mock_task
+    ):
+        """Test that _execute_task does not send empty messages."""
+        daemon_obj = daemon_with_config
+
+        mock_runner = MagicMock()
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.message = ""  # Empty message
+        mock_runner.run_task = AsyncMock(return_value=mock_result)
+        daemon_obj._runner = mock_runner
+
+        daemon_obj._send_task_result_to_channel = AsyncMock()
+
+        await daemon_obj._execute_task(mock_task)
+
+        daemon_obj._send_task_result_to_channel.assert_not_called()

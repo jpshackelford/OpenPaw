@@ -23,21 +23,27 @@ classifiers = [
 ]
 
 dependencies = [
+    # Core SDK dependencies
     "openhands-sdk>=1.0.0",
+    "openhands-tools>=1.0.0",  # Provides TerminalTool, FileEditorTool, etc.
+    # CLI and config
     "click>=8.0.0",
     "pyyaml>=6.0",
     "croniter>=2.0.0",
-    "python-telegram-bot>=20.0",
-    "slack-bolt>=1.18.0",
-    "google-auth>=2.0.0",
+    # Channel adapters
+    "python-telegram-bot>=20.0",  # Telegram adapter
+    "slack-bolt>=1.18.0",  # Slack adapter
+    "google-auth>=2.0.0",  # Gmail adapter
     "google-auth-oauthlib>=1.0.0",
     "google-api-python-client>=2.0.0",
+    "aiohttp>=3.9.0",  # Campfire adapter (webhook server)
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.0.0",
     "ruff>=0.4.0",
     "coverage>=7.0.0",
     "radon>=6.0.0",

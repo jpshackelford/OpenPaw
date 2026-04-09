@@ -12,6 +12,19 @@ from openpaws.daemon import Daemon, get_daemon_status, get_log_file
 from openpaws.scheduler import ScheduledTask
 from openpaws.storage import Storage, TaskState
 
+# Note: Terminal input functions moved to openpaws.terminal module
+# The following are kept for backward compatibility but delegate to terminal module
+
+
+def _handle_prompt_char(ch: str, result: list[str]) -> bool:
+    """Handle a single character in prompt input. Returns True if done.
+
+    DEPRECATED: Use openpaws.terminal._handle_prompt_char instead.
+    """
+    from openpaws.terminal import _handle_prompt_char as terminal_handle_char
+
+    return terminal_handle_char(ch, result, echo=True)
+
 
 @click.group()
 @click.version_option()
@@ -432,6 +445,32 @@ def logs(group, task, lines, follow):
             _follow_logs(log_path)
     else:
         _show_recent_logs(log_path, lines, filter_pattern)
+
+
+@main.group()
+def setup():
+    """Setup wizards for channels and integrations."""
+    pass
+
+
+@setup.command("campfire")
+@click.option("--url", help="Campfire base URL (e.g., http://campfire.localhost)")
+@click.option("--bot-key", help="Bot key from Campfire (e.g., 2-rk2SGfi9lZW0)")
+@click.option("--room-id", help="Default room ID (e.g., 1)")
+@click.option("--webhook-port", default=8765, help="Local webhook port (default: 8765)")
+@click.option("--no-browser", is_flag=True, help="Don't open browser automatically")
+def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
+    """Interactive setup wizard for Campfire integration."""
+    from openpaws.channels.campfire_setup import CampfireSetupWizard
+
+    wizard = CampfireSetupWizard()
+    wizard.run(
+        url=url,
+        bot_key=bot_key,
+        room_id=room_id,
+        webhook_port=webhook_port,
+        no_browser=no_browser,
+    )
 
 
 if __name__ == "__main__":

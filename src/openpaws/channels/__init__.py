@@ -5,6 +5,11 @@ Each adapter implements the ChannelAdapter interface for consistent message hand
 """
 
 from openpaws.channels.base import ChannelAdapter, IncomingMessage, OutgoingMessage
+from openpaws.channels.campfire import (
+    CampfireAdapter,
+    CampfireConfig,
+    create_campfire_adapter,
+)
 from openpaws.channels.gmail import GmailAdapter, GmailConfig, create_gmail_adapter
 from openpaws.channels.slack import SlackAdapter, SlackConfig, create_slack_adapter
 
@@ -12,6 +17,9 @@ __all__ = [
     "ChannelAdapter",
     "IncomingMessage",
     "OutgoingMessage",
+    "CampfireAdapter",
+    "CampfireConfig",
+    "create_campfire_adapter",
     "GmailAdapter",
     "GmailConfig",
     "create_gmail_adapter",

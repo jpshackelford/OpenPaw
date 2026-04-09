@@ -281,3 +281,127 @@ tasks:
             assert config.tasks["reminder"].once == "2024-03-15 09:00"
 
         os.unlink(f.name)
+
+    def test_task_enabled_defaults_to_true(self):
+        """Test that tasks are enabled by default."""
+        config_content = """
+channels:
+  telegram:
+    bot_token: "test-token"
+
+groups:
+  main:
+    channel: telegram
+    chat_id: "123"
+
+tasks:
+  daily:
+    schedule: "0 9 * * *"
+    group: main
+    prompt: "Daily summary"
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(config_content)
+            f.flush()
+
+            config = load_config(f.name)
+            assert config.tasks["daily"].enabled is True
+
+        os.unlink(f.name)
+
+    def test_task_enabled_explicit_true(self):
+        """Test explicitly setting enabled to true."""
+        config_content = """
+channels:
+  telegram:
+    bot_token: "test-token"
+
+groups:
+  main:
+    channel: telegram
+    chat_id: "123"
+
+tasks:
+  daily:
+    schedule: "0 9 * * *"
+    group: main
+    prompt: "Daily summary"
+    enabled: true
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(config_content)
+            f.flush()
+
+            config = load_config(f.name)
+            assert config.tasks["daily"].enabled is True
+
+        os.unlink(f.name)
+
+    def test_task_enabled_false(self):
+        """Test disabling a task with enabled: false."""
+        config_content = """
+channels:
+  telegram:
+    bot_token: "test-token"
+
+groups:
+  main:
+    channel: telegram
+    chat_id: "123"
+
+tasks:
+  daily:
+    schedule: "0 9 * * *"
+    group: main
+    prompt: "Daily summary"
+    enabled: false
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(config_content)
+            f.flush()
+
+            config = load_config(f.name)
+            assert config.tasks["daily"].enabled is False
+
+        os.unlink(f.name)
+
+    def test_mixed_enabled_disabled_tasks(self):
+        """Test config with both enabled and disabled tasks."""
+        config_content = """
+channels:
+  telegram:
+    bot_token: "test-token"
+
+groups:
+  main:
+    channel: telegram
+    chat_id: "123"
+
+tasks:
+  active-task:
+    schedule: "0 9 * * *"
+    group: main
+    prompt: "Active task"
+    enabled: true
+
+  paused-task:
+    schedule: "0 10 * * *"
+    group: main
+    prompt: "Paused task"
+    enabled: false
+
+  default-task:
+    schedule: "0 11 * * *"
+    group: main
+    prompt: "Default enabled"
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(config_content)
+            f.flush()
+
+            config = load_config(f.name)
+            assert config.tasks["active-task"].enabled is True
+            assert config.tasks["paused-task"].enabled is False
+            assert config.tasks["default-task"].enabled is True
+
+        os.unlink(f.name)

@@ -73,34 +73,34 @@ class TestConversationRunner:
         """Test API key detection for Anthropic models."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
 
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            key = runner._get_api_key_for_model("anthropic/claude-sonnet-4-20250514")
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}, clear=True):
+            key = runner._get_api_key("anthropic/claude-sonnet-4-20250514")
             assert key == "test-key"
 
-            key = runner._get_api_key_for_model("claude-3-opus")
+            key = runner._get_api_key("claude-3-opus")
             assert key == "test-key"
 
     def test_get_api_key_openai(self, sample_config, temp_base_dir):
         """Test API key detection for OpenAI models."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
 
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "openai-key"}):
-            key = runner._get_api_key_for_model("openai/gpt-4")
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "openai-key"}, clear=True):
+            key = runner._get_api_key("openai/gpt-4")
             assert key == "openai-key"
 
-            key = runner._get_api_key_for_model("gpt-4-turbo")
+            key = runner._get_api_key("gpt-4-turbo")
             assert key == "openai-key"
 
     def test_get_api_key_google(self, sample_config, temp_base_dir):
         """Test API key detection for Google models."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
 
-        with patch.dict(os.environ, {"GOOGLE_API_KEY": "google-key"}):
-            key = runner._get_api_key_for_model("gemini/gemini-pro")
+        with patch.dict(os.environ, {"GOOGLE_API_KEY": "google-key"}, clear=True):
+            key = runner._get_api_key("gemini/gemini-pro")
             assert key == "google-key"
 
         with patch.dict(os.environ, {"GEMINI_API_KEY": "gemini-key"}, clear=True):
-            key = runner._get_api_key_for_model("google/gemini-pro")
+            key = runner._get_api_key("google/gemini-pro")
             assert key == "gemini-key"
 
     def test_get_api_key_fallback(self, sample_config, temp_base_dir):
@@ -108,7 +108,7 @@ class TestConversationRunner:
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
 
         with patch.dict(os.environ, {"LLM_API_KEY": "fallback-key"}, clear=True):
-            key = runner._get_api_key_for_model("some-other-model")
+            key = runner._get_api_key("some-other-model")
             assert key == "fallback-key"
 
     def test_get_group_workspace(self, sample_config, temp_base_dir):
@@ -135,7 +135,12 @@ class TestConversationRunner:
         """Test LLM creation with basic config."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
 
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+        # Clear environment to ensure we use config values
+        with patch.dict(
+            os.environ,
+            {"ANTHROPIC_API_KEY": "test-key", "LLM_MODEL": "", "LLM_BASE_URL": ""},
+            clear=True,
+        ):
             llm = runner._create_llm()
 
             assert llm.model == "anthropic/claude-sonnet-4-20250514"
@@ -151,7 +156,9 @@ class TestConversationRunner:
         )
         runner = ConversationRunner(config, base_dir=temp_base_dir)
 
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+        # Clear LLM_BASE_URL to ensure we use the config value
+        env = {"ANTHROPIC_API_KEY": "test-key", "LLM_BASE_URL": ""}
+        with patch.dict(os.environ, env, clear=True):
             llm = runner._create_llm()
 
             assert llm.base_url == "http://localhost:4000"
@@ -240,4 +247,246 @@ class TestRunMessage:
                 group_name="main",
                 prompt="Hello there!",
                 conversation_id=None,
+                send_callback=None,
             )
+
+
+class TestAPIKeyDetection:
+    """Additional tests for API key detection."""
+
+    def test_get_api_key_no_match(self, sample_config, temp_base_dir):
+        """Test API key returns None for unknown model without fallback."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        with patch.dict(os.environ, {}, clear=True):
+            key = runner._get_api_key("some-unknown-model")
+            assert key is None
+
+    def test_get_api_key_generic_takes_precedence(self, sample_config, temp_base_dir):
+        """Test LLM_API_KEY takes precedence over provider-specific keys."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        with patch.dict(
+            os.environ,
+            {"LLM_API_KEY": "generic-key", "ANTHROPIC_API_KEY": "anthropic-key"},
+            clear=True,
+        ):
+            key = runner._get_api_key("anthropic/claude-3-opus")
+            assert key == "generic-key"
+
+    def test_get_model_from_env(self, sample_config, temp_base_dir):
+        """Test model selection from environment variable."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        with patch.dict(os.environ, {"LLM_MODEL": "openai/gpt-4"}, clear=True):
+            model = runner._get_model()
+            assert model == "openai/gpt-4"
+
+    def test_get_model_from_config(self, sample_config, temp_base_dir):
+        """Test model selection from config when env not set."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        with patch.dict(os.environ, {}, clear=True):
+            model = runner._get_model()
+            assert model == "anthropic/claude-sonnet-4-20250514"
+
+    def test_get_base_url_from_env(self, sample_config, temp_base_dir):
+        """Test base URL from environment variable."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        with patch.dict(os.environ, {"LLM_BASE_URL": "http://proxy.local"}, clear=True):
+            url = runner._get_base_url()
+            assert url == "http://proxy.local"
+
+    def test_get_base_url_from_config(self, temp_base_dir):
+        """Test base URL from config when env not set."""
+        config = Config(
+            agent=AgentConfig(
+                model="test-model",
+                llm_proxy="http://config-proxy.local",
+            ),
+        )
+        runner = ConversationRunner(config, base_dir=temp_base_dir)
+
+        with patch.dict(os.environ, {}, clear=True):
+            url = runner._get_base_url()
+            assert url == "http://config-proxy.local"
+
+    def test_get_base_url_none(self, sample_config, temp_base_dir):
+        """Test base URL returns None when not configured."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        with patch.dict(os.environ, {}, clear=True):
+            url = runner._get_base_url()
+            assert url is None
+
+
+class TestBuildLLMKwargs:
+    """Tests for _build_llm_kwargs method."""
+
+    def test_build_llm_kwargs_minimal(self, sample_config, temp_base_dir):
+        """Test building LLM kwargs with minimal config."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        with patch.dict(os.environ, {}, clear=True):
+            kwargs = runner._build_llm_kwargs()
+
+            assert "model" in kwargs
+            assert kwargs["model"] == "anthropic/claude-sonnet-4-20250514"
+            assert kwargs.get("temperature") == 0.7
+
+    def test_build_llm_kwargs_with_api_key(self, sample_config, temp_base_dir):
+        """Test building LLM kwargs includes API key."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}, clear=True):
+            kwargs = runner._build_llm_kwargs()
+
+            assert "api_key" in kwargs
+            assert kwargs["api_key"].get_secret_value() == "test-key"
+
+    def test_build_llm_kwargs_with_max_tokens(self, temp_base_dir):
+        """Test building LLM kwargs includes max_tokens."""
+        config = Config(
+            agent=AgentConfig(
+                model="test-model",
+                max_tokens=4096,
+            ),
+        )
+        runner = ConversationRunner(config, base_dir=temp_base_dir)
+
+        with patch.dict(os.environ, {}, clear=True):
+            kwargs = runner._build_llm_kwargs()
+
+            assert kwargs.get("max_output_tokens") == 4096
+
+
+class TestDefaultTools:
+    """Tests for _get_default_tools method."""
+
+    def test_get_default_tools_includes_send_status(self, sample_config, temp_base_dir):
+        """Test that default tools include SendStatusTool."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        tools = runner._get_default_tools()
+
+        tool_names = [t.name for t in tools]
+        assert "send_status" in tool_names
+
+
+class TestCustomInstructions:
+    """Tests for _build_custom_instructions method."""
+
+    def test_build_custom_instructions_default(self, sample_config, temp_base_dir):
+        """Test building default custom instructions."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        instructions = runner._build_custom_instructions()
+
+        assert "send_status" in instructions.lower()
+
+    def test_build_custom_instructions_with_system_prompt(self, temp_base_dir):
+        """Test building custom instructions with system prompt."""
+        config = Config(
+            agent=AgentConfig(
+                model="test-model",
+                system_prompt="You are a helpful assistant.",
+            ),
+        )
+        runner = ConversationRunner(config, base_dir=temp_base_dir)
+
+        instructions = runner._build_custom_instructions()
+
+        assert "You are a helpful assistant" in instructions
+        assert "send_status" in instructions.lower()
+
+
+class TestExtractFinalResponse:
+    """Tests for _extract_final_response method."""
+
+    def test_extract_no_response(self, sample_config, temp_base_dir):
+        """Test extracting response when no events."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        response = runner._extract_final_response([])
+
+        assert response == "No response generated"
+
+    def test_extract_finish_action_returns_none(self, sample_config, temp_base_dir):
+        """Test _extract_finish_action_message returns None for non-ActionEvent."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        # Mock a non-ActionEvent
+        from unittest.mock import MagicMock
+
+        mock_event = MagicMock()
+        mock_event.__class__.__name__ = "SomeOtherEvent"
+
+        result = runner._extract_finish_action_message(mock_event)
+        assert result is None
+
+    def test_extract_assistant_message_returns_none(self, sample_config, temp_base_dir):
+        """Test _extract_assistant_message returns None for non-MessageEvent."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        from unittest.mock import MagicMock
+
+        mock_event = MagicMock()
+        mock_event.__class__.__name__ = "SomeOtherEvent"
+
+        result = runner._extract_assistant_message(mock_event)
+        assert result is None
+
+
+class TestMakeEventCollector:
+    """Tests for _make_event_collector method."""
+
+    def test_make_event_collector(self, sample_config, temp_base_dir):
+        """Test event collector callback."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+        events = []
+
+        callback = runner._make_event_collector(events)
+
+        # Simulate calling the callback with events
+        callback("event1")
+        callback("event2")
+
+        assert events == ["event1", "event2"]
+
+
+class TestBuildCallbacks:
+    """Tests for _build_callbacks method."""
+
+    def test_build_callbacks_no_extra(self, sample_config, temp_base_dir):
+        """Test building callbacks without extra callbacks."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+        events = []
+
+        callbacks = runner._build_callbacks(events, None)
+
+        assert len(callbacks) == 1  # Just the event collector
+
+    def test_build_callbacks_with_extra(self, sample_config, temp_base_dir):
+        """Test building callbacks with extra callbacks."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+        events = []
+        extra = [lambda x: None, lambda x: None]
+
+        callbacks = runner._build_callbacks(events, extra)
+
+        assert len(callbacks) == 3  # Event collector + 2 extra
+
+
+class TestGroupNotFoundResult:
+    """Tests for _group_not_found_result method."""
+
+    def test_group_not_found_result(self, sample_config, temp_base_dir):
+        """Test group not found result format."""
+        runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
+
+        result = runner._group_not_found_result("missing-group")
+
+        assert result.success is False
+        assert "missing-group" in result.message
+        assert "missing-group" in result.error

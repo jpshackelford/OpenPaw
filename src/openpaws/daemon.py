@@ -26,10 +26,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from openpaws.channels.base import ChannelAdapter, IncomingMessage
+from openpaws.channels.base import ChannelAdapter, IncomingMessage, OutgoingMessage
+from openpaws.channels.campfire import CampfireAdapter, CampfireConfig
 from openpaws.channels.gmail import GmailAdapter, GmailConfig
 from openpaws.channels.slack import SlackAdapter, SlackConfig
 from openpaws.config import Config, load_config
+from openpaws.runner import ConversationRunner
 from openpaws.scheduler import Scheduler
 from openpaws.storage import Storage
 
@@ -316,6 +318,8 @@ class Daemon:
         self.state: DaemonState | None = None
         self._shutdown_event: asyncio.Event | None = None
         self._channel_adapters: list[ChannelAdapter] = []
+        self._channel_adapters_by_type: dict[str, ChannelAdapter] = {}
+        self._runner: ConversationRunner | None = None
 
     def _setup_signal_handlers(self) -> None:
         """Setup signal handlers for graceful shutdown."""
@@ -329,11 +333,44 @@ class Daemon:
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, lambda s=sig: signal_handler(s))
 
+    def _get_task_adapter(self, task) -> tuple | None:
+        """Get the adapter and group for a task, or None if unavailable."""
+        group = self.config.groups.get(task.config.group)
+        if not group:
+            logger.warning(f"Task '{task.config.name}' references unknown group")
+            return None
+        adapter = self._channel_adapters_by_type.get(group.channel)
+        if not adapter or not adapter.is_running():
+            # Error level because task result will be lost if adapter is down
+            logger.error(
+                f"Adapter '{group.channel}' not running, task result lost "
+                f"for '{task.config.name}'"
+            )
+            return None
+        return adapter, group
+
+    async def _send_task_result_to_channel(self, task, message: str) -> None:
+        """Send task result to the task's configured channel."""
+        result = self._get_task_adapter(task)
+        if not result:
+            return
+        adapter, group = result
+        try:
+            outgoing = OutgoingMessage(channel_id=group.chat_id, text=message)
+            await adapter.send_message(outgoing)
+            name = task.config.name
+            logger.info(f"Task '{name}' sent to {group.channel}:{group.chat_id}")
+        except Exception as e:
+            logger.error(f"Failed to send task result to channel: {e}")
+
     async def _execute_task(self, task) -> str:
-        """Execute a scheduled task."""
+        """Execute a scheduled task and send result to configured channel."""
         logger.info(f"Executing task: {task.config.name}")
-        # TODO: Integrate with software-agent-sdk conversation
-        # For now, just log and return
+        if self._runner:
+            result = await self._runner.run_task(task)
+            if result.success and result.message:
+                await self._send_task_result_to_channel(task, result.message)
+            return result.message
         return f"Task '{task.config.name}' executed at {datetime.now()}"
 
     def _load_config(self) -> None:
@@ -350,12 +387,62 @@ class Daemon:
         self.storage = Storage()
         logger.info(f"Storage initialized: {self.storage.db_path}")
 
+    def _setup_runner(self) -> None:
+        """Initialize the conversation runner."""
+        self._runner = ConversationRunner(self.config)
+        logger.info("Conversation runner initialized")
+
     def _setup_scheduler(self) -> None:
         """Initialize scheduler with configured tasks."""
         self.scheduler = Scheduler(storage=self.storage)
         for task_config in self.config.tasks.values():
+            if not task_config.enabled:
+                logger.info(f"Skipping disabled task: {task_config.name}")
+                continue
             self.scheduler.add_task(task_config)
             logger.info(f"Scheduled task: {task_config.name}")
+
+    def _find_group_for_message(self, message: IncomingMessage) -> str | None:
+        """Find the group name that matches the incoming message."""
+        for name, group in self.config.groups.items():
+            if (
+                group.channel == message.channel_type
+                and group.chat_id == message.channel_id
+            ):
+                return name
+        return None
+
+    async def _signal_processing_start(self, message: IncomingMessage) -> None:
+        """Signal that we're starting to process (e.g., add 👀 reaction)."""
+        if not message.on_processing_start:
+            logger.debug("No on_processing_start callback set")
+            return
+        logger.debug("Calling on_processing_start callback")
+        try:
+            await message.on_processing_start()
+            logger.debug("on_processing_start callback completed")
+        except Exception as e:
+            logger.warning(f"Failed to signal processing start: {e}")
+
+    async def _run_message_conversation(
+        self, group_name: str, message: IncomingMessage
+    ) -> str | None:
+        """Run the conversation and return the response."""
+        try:
+            result = await self._runner.run_message(
+                group_name=group_name,
+                message=message.text,
+                sender=message.user_name,
+                send_callback=message.send_status,
+            )
+            if result.success:
+                logger.info(f"Response generated for {group_name}")
+                return result.message
+            logger.error(f"Conversation failed: {result.error}")
+            return f"Sorry, I encountered an error: {result.error}"
+        except Exception as e:
+            logger.exception(f"Error handling message: {e}")
+            return f"Sorry, something went wrong: {e}"
 
     async def _handle_message(self, message: IncomingMessage) -> str | None:
         """Handle incoming messages from channel adapters."""
@@ -363,9 +450,20 @@ class Daemon:
             f"Message from {message.channel_type}:{message.channel_id} "
             f"user={message.user_id}: {message.text[:50]}..."
         )
-        # TODO: Integrate with software-agent-sdk conversation
-        # For now, just acknowledge
-        return f"Received: {message.text[:100]}"
+
+        if not self._runner:
+            logger.error("Conversation runner not initialized")
+            return "Error: Bot not fully initialized"
+
+        group_name = self._find_group_for_message(message)
+        if not group_name:
+            logger.warning(
+                f"No group configured for {message.channel_type}:{message.channel_id}"
+            )
+            return None
+
+        await self._signal_processing_start(message)
+        return await self._run_message_conversation(group_name, message)
 
     def _create_slack_adapter(self, channel_config) -> SlackAdapter | None:
         """Create a Slack adapter from channel config."""
@@ -404,23 +502,60 @@ class Daemon:
             logger.error(f"Invalid Gmail config: {e}")
             return None
 
+    def _validate_campfire_config(self, cfg) -> bool:
+        """Validate campfire channel config has required fields."""
+        if not cfg.base_url:
+            logger.warning("Campfire channel missing base_url, skipping")
+            return False
+        if not cfg.bot_key:
+            logger.warning("Campfire channel missing bot_key, skipping")
+            return False
+        return True
+
+    def _build_campfire_config(self, channel_config) -> CampfireConfig:
+        """Build CampfireConfig from channel config."""
+        return CampfireConfig(
+            base_url=channel_config.base_url,
+            bot_key=channel_config.bot_key,
+            webhook_port=channel_config.webhook_port,
+            webhook_path=channel_config.webhook_path,
+            webhook_host=channel_config.webhook_host,
+            context_messages=channel_config.context_messages,
+        )
+
+    def _create_campfire_adapter(self, channel_config) -> CampfireAdapter | None:
+        """Create a Campfire adapter from channel config."""
+        if not self._validate_campfire_config(channel_config):
+            return None
+        try:
+            return CampfireAdapter(self._build_campfire_config(channel_config))
+        except ValueError as e:
+            logger.error(f"Invalid Campfire config: {e}")
+            return None
+
+    def _register_adapter(self, adapter: ChannelAdapter, name: str) -> None:
+        """Register an adapter in both the list and type lookup dict."""
+        self._channel_adapters.append(adapter)
+        self._channel_adapters_by_type[adapter.channel_type] = adapter
+        logger.info(f"Configured {adapter.channel_type} channel: {name}")
+
+    def _create_adapter_for_type(self, channel_config):
+        """Create an adapter based on channel type."""
+        factories = {
+            "slack": self._create_slack_adapter,
+            "gmail": self._create_gmail_adapter,
+            "campfire": self._create_campfire_adapter,
+        }
+        factory = factories.get(channel_config.type)
+        return factory(channel_config) if factory else None
+
     def _setup_channel_adapters(self) -> None:
         """Initialize channel adapters from configuration."""
         self._channel_adapters = []
-
-        for name, channel_config in self.config.channels.items():
-            if channel_config.type == "slack":
-                adapter = self._create_slack_adapter(channel_config)
-                if adapter:
-                    self._channel_adapters.append(adapter)
-                    logger.info(f"Configured Slack channel: {name}")
-            elif channel_config.type == "gmail":
-                adapter = self._create_gmail_adapter(channel_config)
-                if adapter:
-                    self._channel_adapters.append(adapter)
-                    logger.info(f"Configured Gmail channel: {name}")
-            else:
-                logger.debug(f"Skipping channel type: {channel_config.type}")
+        self._channel_adapters_by_type = {}
+        for name, cfg in self.config.channels.items():
+            if adapter := self._create_adapter_for_type(cfg):
+                self._register_adapter(adapter, name)
 
     async def _start_channel_adapters(self) -> None:
         """Start all configured channel adapters."""
@@ -461,6 +596,7 @@ class Daemon:
         )
         self._load_config()
         self._setup_storage()
+        self._setup_runner()
         self._setup_scheduler()
         self._setup_channel_adapters()
 

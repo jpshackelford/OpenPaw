@@ -9,7 +9,7 @@ import yaml
 
 @dataclass
 class ChannelConfig:
-    """Configuration for a channel (Telegram, Slack, Gmail, etc.)."""
+    """Configuration for a channel (Telegram, Slack, Gmail, Campfire, etc.)."""
 
     type: str
     # Slack/Telegram tokens
@@ -21,6 +21,13 @@ class ChannelConfig:
     mode: str | None = None  # "channel" or "tool" for Gmail
     poll_interval: int = 60  # seconds, for Gmail polling
     filter_label: str | None = None  # Gmail label filter
+    # Campfire-specific settings
+    base_url: str | None = None  # Campfire server URL
+    bot_key: str | None = None  # Campfire bot key (format: id-token)
+    webhook_port: int = 8765  # Local port for webhook server
+    webhook_path: str = "/webhook"  # Path for webhook endpoint
+    webhook_host: str = "127.0.0.1"  # Bind address (use 0.0.0.0 for Docker)
+    context_messages: int = 10  # Number of recent messages for conversation context
 
 
 @dataclass
@@ -43,6 +50,8 @@ class TaskConfig:
     - schedule: Cron expression (e.g., "0 9 * * *")
     - interval: Run every N seconds (e.g., 3600 for every hour)
     - once: Run at a specific timestamp (ISO format or "YYYY-MM-DD HH:MM")
+
+    Set enabled=False to pause a task without removing it from config.
     """
 
     name: str
@@ -51,6 +60,7 @@ class TaskConfig:
     schedule: str | None = None  # Cron expression
     interval: int | None = None  # Seconds between runs
     once: str | None = None  # ISO timestamp for one-time execution
+    enabled: bool = True  # Set to False to disable without removing
 
 
 @dataclass
@@ -148,7 +158,8 @@ def _validate_task_schedule(name: str, cfg: dict) -> None:
 def _parse_tasks(raw: dict) -> dict[str, TaskConfig]:
     """Parse task configurations from raw YAML data."""
     tasks = {}
-    for name, cfg in raw.get("tasks", {}).items():
+    raw_tasks = raw.get("tasks") or {}
+    for name, cfg in raw_tasks.items():
         _validate_task_schedule(name, cfg)
 
         # Parse interval if present

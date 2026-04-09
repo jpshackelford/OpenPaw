@@ -5,8 +5,12 @@ abstract base class for consistent message handling across platforms.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
+
+# Callback types for status updates during message processing
+StatusCallback = Callable[[], Awaitable[None]]
+SendCallback = Callable[[str], Awaitable[None]]
 
 
 @dataclass
@@ -23,6 +27,8 @@ class IncomingMessage:
         is_mention: Whether the bot was explicitly mentioned
         is_dm: Whether this is a direct message
         raw_event: The original platform-specific event data
+        on_processing_start: Optional callback when handler starts processing
+        send_status: Optional callback to send interim status messages
     """
 
     channel_type: str
@@ -34,6 +40,9 @@ class IncomingMessage:
     is_mention: bool = False
     is_dm: bool = False
     raw_event: dict = field(default_factory=dict)
+    # Optional callbacks for status updates (set by adapters that support them)
+    on_processing_start: StatusCallback | None = None
+    send_status: SendCallback | None = None
 
 
 @dataclass
