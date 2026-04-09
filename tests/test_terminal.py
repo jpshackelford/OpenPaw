@@ -1,9 +1,12 @@
 """Tests for terminal input abstraction layer."""
 
+import sys
+
 import pytest
 
 from openpaws.terminal import (
     MockTerminalInput,
+    RealTerminalInput,
     _handle_prompt_char,
     _parse_yes_no,
 )
@@ -226,3 +229,229 @@ class TestMockTerminalInputIntegration:
         assert terminal.confirm("Continue?") is True
         # prompt uses next response
         assert terminal.prompt("Input") == "test"
+
+
+class TestRealTerminalInput:
+    """Tests for RealTerminalInput by mocking low-level terminal operations.
+
+    These tests verify that RealTerminalInput correctly:
+    - Saves and restores terminal settings
+    - Uses appropriate terminal modes (raw/cbreak)
+    - Reads from stdin correctly
+    - Integrates with helper functions (_parse_yes_no, _handle_prompt_char)
+
+    Note: We mock termios/tty modules in sys.modules before importing RealTerminalInput
+    methods, which allows us to test the actual code paths.
+    """
+
+    def test_read_char_basic(self, monkeypatch):
+        """Test read_char returns the character read from stdin."""
+        from unittest.mock import MagicMock
+
+        # Create mock modules
+        mock_termios = MagicMock()
+        mock_termios.tcgetattr.return_value = ["settings"]
+        mock_termios.TCSADRAIN = 1
+
+        mock_tty = MagicMock()
+
+        mock_stdin = MagicMock()
+        mock_stdin.fileno.return_value = 0
+        mock_stdin.read.return_value = "x"
+
+        # Patch
+        monkeypatch.setitem(sys.modules, "termios", mock_termios)
+        monkeypatch.setitem(sys.modules, "tty", mock_tty)
+        monkeypatch.setattr(sys, "stdin", mock_stdin)
+
+        terminal = RealTerminalInput()
+        result = terminal.read_char()
+
+        assert result == "x"
+        mock_stdin.read.assert_called_with(1)
+        mock_tty.setraw.assert_called_once()
+        mock_termios.tcgetattr.assert_called_once()
+        mock_termios.tcsetattr.assert_called_once()
+
+    def test_read_line_basic(self, monkeypatch):
+        """Test read_line returns accumulated characters until Enter."""
+        from unittest.mock import MagicMock
+
+        mock_termios = MagicMock()
+        mock_termios.tcgetattr.return_value = ["settings"]
+        mock_termios.TCSADRAIN = 1
+
+        mock_tty = MagicMock()
+
+        mock_stdin = MagicMock()
+        mock_stdin.fileno.return_value = 0
+        mock_stdin.read.side_effect = ["h", "i", "\r"]
+
+        monkeypatch.setitem(sys.modules, "termios", mock_termios)
+        monkeypatch.setitem(sys.modules, "tty", mock_tty)
+        monkeypatch.setattr(sys, "stdin", mock_stdin)
+
+        terminal = RealTerminalInput()
+        result = terminal.read_line()
+
+        assert result == "hi"
+        mock_tty.setcbreak.assert_called_once()
+
+    def test_read_line_with_backspace(self, monkeypatch):
+        """Test read_line handles backspace correctly."""
+        from unittest.mock import MagicMock
+
+        mock_termios = MagicMock()
+        mock_termios.tcgetattr.return_value = ["settings"]
+        mock_termios.TCSADRAIN = 1
+
+        mock_tty = MagicMock()
+
+        mock_stdin = MagicMock()
+        mock_stdin.fileno.return_value = 0
+        # Type "ab", backspace, "c", Enter -> "ac"
+        mock_stdin.read.side_effect = ["a", "b", "\x7f", "c", "\r"]
+
+        monkeypatch.setitem(sys.modules, "termios", mock_termios)
+        monkeypatch.setitem(sys.modules, "tty", mock_tty)
+        monkeypatch.setattr(sys, "stdin", mock_stdin)
+
+        terminal = RealTerminalInput()
+        result = terminal.read_line()
+
+        assert result == "ac"
+
+    def test_confirm_yes(self, monkeypatch):
+        """Test confirm returns True for 'y'."""
+        from unittest.mock import MagicMock
+
+        mock_termios = MagicMock()
+        mock_termios.tcgetattr.return_value = ["settings"]
+        mock_termios.TCSADRAIN = 1
+
+        mock_tty = MagicMock()
+
+        mock_stdin = MagicMock()
+        mock_stdin.fileno.return_value = 0
+        mock_stdin.read.return_value = "y"
+
+        monkeypatch.setitem(sys.modules, "termios", mock_termios)
+        monkeypatch.setitem(sys.modules, "tty", mock_tty)
+        monkeypatch.setattr(sys, "stdin", mock_stdin)
+
+        terminal = RealTerminalInput()
+        assert terminal.confirm("Continue?") is True
+
+    def test_confirm_no(self, monkeypatch):
+        """Test confirm returns False for 'n'."""
+        from unittest.mock import MagicMock
+
+        mock_termios = MagicMock()
+        mock_termios.tcgetattr.return_value = ["settings"]
+        mock_termios.TCSADRAIN = 1
+
+        mock_tty = MagicMock()
+
+        mock_stdin = MagicMock()
+        mock_stdin.fileno.return_value = 0
+        mock_stdin.read.return_value = "n"
+
+        monkeypatch.setitem(sys.modules, "termios", mock_termios)
+        monkeypatch.setitem(sys.modules, "tty", mock_tty)
+        monkeypatch.setattr(sys, "stdin", mock_stdin)
+
+        terminal = RealTerminalInput()
+        assert terminal.confirm("Continue?") is False
+
+    def test_confirm_default_on_enter(self, monkeypatch):
+        """Test confirm uses default on Enter."""
+        from unittest.mock import MagicMock
+
+        mock_termios = MagicMock()
+        mock_termios.tcgetattr.return_value = ["settings"]
+        mock_termios.TCSADRAIN = 1
+
+        mock_tty = MagicMock()
+
+        mock_stdin = MagicMock()
+        mock_stdin.fileno.return_value = 0
+        mock_stdin.read.return_value = "\r"
+
+        monkeypatch.setitem(sys.modules, "termios", mock_termios)
+        monkeypatch.setitem(sys.modules, "tty", mock_tty)
+        monkeypatch.setattr(sys, "stdin", mock_stdin)
+
+        terminal = RealTerminalInput()
+        assert terminal.confirm("Continue?", default=True) is True
+        assert terminal.confirm("Continue?", default=False) is False
+
+    def test_prompt_returns_input(self, monkeypatch):
+        """Test prompt returns user input."""
+        from unittest.mock import MagicMock
+
+        mock_termios = MagicMock()
+        mock_termios.tcgetattr.return_value = ["settings"]
+        mock_termios.TCSADRAIN = 1
+
+        mock_tty = MagicMock()
+
+        mock_stdin = MagicMock()
+        mock_stdin.fileno.return_value = 0
+        mock_stdin.read.side_effect = ["t", "e", "s", "t", "\r"]
+
+        monkeypatch.setitem(sys.modules, "termios", mock_termios)
+        monkeypatch.setitem(sys.modules, "tty", mock_tty)
+        monkeypatch.setattr(sys, "stdin", mock_stdin)
+
+        terminal = RealTerminalInput()
+        result = terminal.prompt("Enter value")
+
+        assert result == "test"
+
+    def test_prompt_empty_uses_default(self, monkeypatch):
+        """Test prompt returns default on empty input."""
+        from unittest.mock import MagicMock
+
+        mock_termios = MagicMock()
+        mock_termios.tcgetattr.return_value = ["settings"]
+        mock_termios.TCSADRAIN = 1
+
+        mock_tty = MagicMock()
+
+        mock_stdin = MagicMock()
+        mock_stdin.fileno.return_value = 0
+        mock_stdin.read.return_value = "\r"
+
+        monkeypatch.setitem(sys.modules, "termios", mock_termios)
+        monkeypatch.setitem(sys.modules, "tty", mock_tty)
+        monkeypatch.setattr(sys, "stdin", mock_stdin)
+
+        terminal = RealTerminalInput()
+        result = terminal.prompt("Enter value", default="fallback")
+
+        assert result == "fallback"
+
+    def test_read_char_restores_settings_on_error(self, monkeypatch):
+        """Test terminal settings are restored even on read error."""
+        from unittest.mock import MagicMock
+
+        mock_termios = MagicMock()
+        mock_termios.tcgetattr.return_value = ["settings"]
+        mock_termios.TCSADRAIN = 1
+
+        mock_tty = MagicMock()
+
+        mock_stdin = MagicMock()
+        mock_stdin.fileno.return_value = 0
+        mock_stdin.read.side_effect = OSError("read error")
+
+        monkeypatch.setitem(sys.modules, "termios", mock_termios)
+        monkeypatch.setitem(sys.modules, "tty", mock_tty)
+        monkeypatch.setattr(sys, "stdin", mock_stdin)
+
+        terminal = RealTerminalInput()
+        with pytest.raises(IOError):
+            terminal.read_char()
+
+        # Settings should still be restored via finally block
+        mock_termios.tcsetattr.assert_called_once()
