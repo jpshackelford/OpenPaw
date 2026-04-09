@@ -52,8 +52,8 @@
       "min_coverage": 97.1
     },
     "src/openpaws/terminal.py": {
-      "min_coverage": 67.0,
-      "note": "RealTerminalInput requires TTY - MockTerminalInput is fully covered"
+      "min_coverage": 96.0,
+      "note": "96% with pytest-cov; uncovered lines are Protocol class definitions"
     }
   },
   "new_file_threshold": 80.0

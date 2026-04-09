@@ -56,3 +56,4 @@ state.db
 logs/
 *.log
 .coverage.*
+coverage.xml

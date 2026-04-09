@@ -60,11 +60,14 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          coverage run -m pytest tests/
-          coverage combine || true
+          # Use pytest-cov for better coverage tracking with module patching
+          python -m pytest tests/ \
+            --cov=openpaws \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml
 
       - name: Check per-file coverage thresholds
-        run: python scripts/check_coverage.py
+        run: python scripts/check_coverage.py --use-xml
 
       - name: Upload coverage data
         if: matrix.python-version == '3.12'

@@ -7,8 +7,11 @@ Features:
 - Exemptions: files can be exempted with a reason in the baseline
 
 Usage:
-    # Check coverage against baseline
+    # Check coverage against baseline (uses .coverage file)
     python scripts/check_coverage.py
+
+    # Check coverage from XML file (pytest-cov output)
+    python scripts/check_coverage.py --use-xml
 
     # Update baseline with current coverage (ratchet up only)
     python scripts/check_coverage.py --update-baseline
@@ -33,6 +36,7 @@ import argparse
 import json
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 # ANSI colors
@@ -47,6 +51,32 @@ BASELINE_FILE = Path(".coverage-baseline.json")
 DEFAULT_NEW_FILE_THRESHOLD = 80.0
 # Allow small variance in coverage (e.g., due to timing differences in async tests)
 TOLERANCE = 0.5
+
+
+def parse_coverage_xml(xml_file: Path = Path("coverage.xml")) -> dict:
+    """Parse coverage.xml (Cobertura format) and return coverage data."""
+    if not xml_file.exists():
+        print(f"{RED}Error: {xml_file} not found{RESET}")
+        print("Run: pytest --cov=openpaws --cov-report=xml:coverage.xml")
+        sys.exit(1)
+
+    tree = ET.parse(xml_file)
+    root = tree.getroot()
+
+    files = {}
+    for package in root.findall(".//package"):
+        for cls in package.findall("classes/class"):
+            filename = cls.get("filename", "")
+            line_rate = float(cls.get("line-rate", 0))
+            # Use line rate as primary metric (matches what coverage.py reports)
+            percent = round(line_rate * 100, 1)
+            files[filename] = {"summary": {"percent_covered": percent}}
+
+    # Get total coverage from root element
+    total_line_rate = float(root.get("line-rate", 0))
+    total = round(total_line_rate * 100, 1)
+
+    return {"files": files, "totals": {"percent_covered": total}}
 
 
 def run_coverage_json() -> dict:
@@ -85,9 +115,9 @@ def get_file_coverage(cov_data: dict) -> dict[str, float]:
     return result
 
 
-def check_coverage(report_only: bool = False) -> bool:
+def check_coverage(report_only: bool = False, use_xml: bool = False) -> bool:
     """Check coverage against baseline. Returns True if all checks pass."""
-    cov_data = run_coverage_json()
+    cov_data = parse_coverage_xml() if use_xml else run_coverage_json()
     baseline = load_baseline()
     file_coverage = get_file_coverage(cov_data)
 
@@ -105,7 +135,6 @@ def check_coverage(report_only: bool = False) -> bool:
     for filepath, current in sorted(file_coverage.items()):
         # Check if exempt
         if filepath in exempt_files:
-            reason = exempt_files[filepath]
             print(f"{filepath:<50} {current:>7.1f}% {'exempt':>10} {CYAN}exempt{RESET}")
             continue
 
@@ -161,9 +190,9 @@ def check_coverage(report_only: bool = False) -> bool:
     return len(errors) == 0
 
 
-def update_baseline() -> None:
+def update_baseline(use_xml: bool = False) -> None:
     """Update baseline with current coverage (ratchet up only)."""
-    cov_data = run_coverage_json()
+    cov_data = parse_coverage_xml() if use_xml else run_coverage_json()
     baseline = load_baseline()
     file_coverage = get_file_coverage(cov_data)
 
@@ -230,12 +259,17 @@ def main():
         action="store_true",
         help="Show report without failing on threshold violations",
     )
+    parser.add_argument(
+        "--use-xml",
+        action="store_true",
+        help="Read coverage from coverage.xml (pytest-cov output) instead of .coverage",
+    )
     args = parser.parse_args()
 
     if args.update_baseline:
-        update_baseline()
+        update_baseline(use_xml=args.use_xml)
     else:
-        success = check_coverage(report_only=args.report_only)
+        success = check_coverage(report_only=args.report_only, use_xml=args.use_xml)
         sys.exit(0 if success else 1)
 
 
