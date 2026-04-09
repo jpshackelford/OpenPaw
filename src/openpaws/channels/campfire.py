@@ -252,27 +252,25 @@ class CampfireAdapter(ChannelAdapter):
         app.router.add_get("/health", self._health_check)
         return app
 
+    async def _start_web_server(self) -> None:
+        """Start the aiohttp web server for webhooks."""
+        self._app = self._setup_routes()
+        self._runner = web.AppRunner(self._app)
+        await self._runner.setup()
+        self._site = web.TCPSite(self._runner, "0.0.0.0", self._config.webhook_port)
+        await self._site.start()
+
     async def start(self, message_handler: MessageHandler) -> None:
         """Start the Campfire adapter with webhook server."""
         if self._running:
             logger.warning("Campfire adapter already running")
             return
-
         self._message_handler = message_handler
         self._http_session = ClientSession()
-
-        self._app = self._setup_routes()
-        self._runner = web.AppRunner(self._app)
-        await self._runner.setup()
-
-        self._site = web.TCPSite(self._runner, "0.0.0.0", self._config.webhook_port)
-        await self._site.start()
-
+        await self._start_web_server()
         self._running = True
-        logger.info(
-            f"Campfire adapter started - webhook listening on "
-            f"http://0.0.0.0:{self._config.webhook_port}{self._config.webhook_path}"
-        )
+        port, path = self._config.webhook_port, self._config.webhook_path
+        logger.info(f"Campfire adapter started - webhook on http://0.0.0.0:{port}{path}")
 
     async def _cleanup_resources(self) -> None:
         """Clean up all adapter resources."""
@@ -363,25 +361,24 @@ class CampfireAdapter(ChannelAdapter):
         footer = f"\n\n---\nNow {current_user} says:\n"
         return f"{header}\n{body}{footer}"
 
+    async def _handle_send_response(self, resp, channel_id: str) -> None:
+        """Handle response from message send API."""
+        if resp.status == 201:
+            logger.info(f"Sent message to room {channel_id}: {resp.headers.get('Location', '')}")
+        else:
+            body = await resp.text()
+            logger.error(f"Failed to send message: {resp.status} - {body}")
+            raise RuntimeError(f"Campfire API error: {resp.status}")
+
     async def send_message(self, message: OutgoingMessage) -> None:
         """Send a message to a Campfire room."""
         if not self._http_session:
             raise RuntimeError("Campfire adapter not started")
-
         url = self._build_message_url(message.channel_id)
-
         async with self._http_session.post(
-            url,
-            data=message.text,
-            headers={"Content-Type": "text/plain; charset=utf-8"},
+            url, data=message.text, headers={"Content-Type": "text/plain; charset=utf-8"}
         ) as resp:
-            if resp.status == 201:
-                location = resp.headers.get("Location", "")
-                logger.info(f"Sent message to room {message.channel_id}: {location}")
-            else:
-                body = await resp.text()
-                logger.error(f"Failed to send message: {resp.status} - {body}")
-                raise RuntimeError(f"Campfire API error: {resp.status}")
+            await self._handle_send_response(resp, message.channel_id)
 
     def _build_boost_url(self, room_id: str, message_id: str) -> str:
         """Build URL for adding a reaction (boost) to a message."""
