@@ -181,43 +181,50 @@ class CampfireAdapter(ChannelAdapter):
         # Acknowledge receipt immediately (204 No Content - no body for Campfire)
         return web.Response(status=204)
 
-    async def _process_message_async(self, incoming: IncomingMessage) -> None:
-        """Process message asynchronously and send response back to Campfire.
+    def _add_context_to_message(
+        self, incoming: IncomingMessage, context_text: str
+    ) -> IncomingMessage:
+        """Create a new IncomingMessage with context prepended to the text."""
+        return IncomingMessage(
+            channel_type=incoming.channel_type,
+            channel_id=incoming.channel_id,
+            user_id=incoming.user_id,
+            user_name=incoming.user_name,
+            text=f"{context_text}{incoming.text}",
+            thread_id=incoming.thread_id,
+            is_mention=incoming.is_mention,
+            is_dm=incoming.is_dm,
+            raw_event=incoming.raw_event,
+            on_processing_start=incoming.on_processing_start,
+            send_status=incoming.send_status,
+        )
 
-        Fetches conversation context from the room and prepends it to the message
-        so the agent can understand the conversation flow.
-        """
+    async def _send_error_response(
+        self, channel_id: str, error: Exception
+    ) -> None:
+        """Try to send an error message back to Campfire."""
         try:
-            # Fetch conversation context (messages before the current one)
+            error_msg = OutgoingMessage(
+                channel_id=channel_id, text=f"Sorry, I encountered an error: {error}"
+            )
+            await self.send_message(error_msg)
+        except Exception:
+            logger.exception("Failed to send error message to Campfire")
+
+    async def _process_message_async(self, incoming: IncomingMessage) -> None:
+        """Process message asynchronously and send response back to Campfire."""
+        try:
             context_messages = await self.fetch_room_context(
                 incoming.channel_id, before_message_id=incoming.thread_id
             )
 
-            # Build the full message with context
             if context_messages:
                 context_text = self._format_context_for_prompt(
                     context_messages, incoming.user_name
                 )
-                full_message = f"{context_text}{incoming.text}"
-                # Create a new IncomingMessage with the contextualized text
-                # Important: Copy the callbacks from the original message!
-                incoming_with_context = IncomingMessage(
-                    channel_type=incoming.channel_type,
-                    channel_id=incoming.channel_id,
-                    user_id=incoming.user_id,
-                    user_name=incoming.user_name,
-                    text=full_message,
-                    thread_id=incoming.thread_id,
-                    is_mention=incoming.is_mention,
-                    is_dm=incoming.is_dm,
-                    raw_event=incoming.raw_event,
-                    on_processing_start=incoming.on_processing_start,
-                    send_status=incoming.send_status,
-                )
-                response = await self._message_handler(incoming_with_context)
-            else:
-                response = await self._message_handler(incoming)
+                incoming = self._add_context_to_message(incoming, context_text)
 
+            response = await self._message_handler(incoming)
             if response:
                 outgoing = OutgoingMessage(
                     channel_id=incoming.channel_id,
@@ -227,15 +234,7 @@ class CampfireAdapter(ChannelAdapter):
                 await self.send_message(outgoing)
         except Exception as e:
             logger.exception(f"Error processing message: {e}")
-            # Try to send error message back to Campfire
-            try:
-                error_msg = OutgoingMessage(
-                    channel_id=incoming.channel_id,
-                    text=f"Sorry, I encountered an error: {e}",
-                )
-                await self.send_message(error_msg)
-            except Exception:
-                logger.exception("Failed to send error message to Campfire")
+            await self._send_error_response(incoming.channel_id, e)
 
     async def _health_check(self, request: web.Request) -> web.Response:
         """Simple health check endpoint."""

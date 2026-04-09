@@ -558,8 +558,8 @@ def _parse_campfire_curl(curl_cmd: str) -> tuple[str, str, str] | None:
 
 def _check_campfire_reachable(base_url: str) -> bool:
     """Check if Campfire is reachable."""
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     try:
         req = urllib.request.Request(f"{base_url}/session/new", method="GET")
@@ -586,7 +586,9 @@ def _check_campfire_setup_complete(base_url: str) -> bool:
         return False
 
 
-def _test_campfire_bot_key(base_url: str, room_id: str, bot_key: str) -> tuple[bool, str]:
+def _test_campfire_bot_key(
+    base_url: str, room_id: str, bot_key: str
+) -> tuple[bool, str]:
     """Test if a bot key is valid and room exists.
 
     Returns (success, message) tuple.
@@ -595,11 +597,11 @@ def _test_campfire_bot_key(base_url: str, room_id: str, bot_key: str) -> tuple[b
     - (False, "invalid_room") if bot key is valid but room doesn't exist
     - (False, "error") for other errors
     """
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     url = f"{base_url}/rooms/{room_id}/{bot_key}/messages"
-    data = "🐾 OpenPaws connected successfully!".encode("utf-8")
+    data = "🐾 OpenPaws connected successfully!".encode()
 
     try:
         req = urllib.request.Request(
@@ -625,56 +627,28 @@ def _test_campfire_bot_key(base_url: str, room_id: str, bot_key: str) -> tuple[b
 
 
 def _find_valid_room(base_url: str, bot_key: str, max_rooms: int = 10) -> str | None:
-    """Try to find a valid room ID by testing room numbers 1 through max_rooms.
-
-    Returns the first valid room ID found, or None if none found.
-    """
+    """Try to find a valid room ID by testing room numbers 1 through max_rooms."""
     for room_id in range(1, max_rooms + 1):
         success, result = _test_campfire_bot_key(base_url, str(room_id), bot_key)
         if success:
             return str(room_id)
         elif result == "invalid_key":
-            # Bot key is invalid, no point testing more rooms
             return None
     return None
 
 
-@setup.command("campfire")
-@click.option("--url", help="Campfire base URL (e.g., http://campfire.localhost)")
-@click.option("--bot-key", help="Bot key from Campfire (e.g., 2-rk2SGfi9lZW0)")
-@click.option("--room-id", help="Default room ID (e.g., 1)")
-@click.option("--webhook-port", default=8765, help="Local webhook port (default: 8765)")
-@click.option("--no-browser", is_flag=True, help="Don't open browser automatically")
-def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
-    """Interactive setup wizard for Campfire integration.
-
-    This wizard will guide you through:
-    1. Checking Campfire status
-    2. Opening Campfire to create a bot (if needed)
-    3. Configuring the webhook URL
-    4. Extracting the bot key
-    5. Testing the connection
-    6. Saving the configuration
-    """
-    click.echo()
-    click.echo("🏕️  Campfire Setup Wizard")
-    click.echo("═" * 40)
-    click.echo()
-
-    # Step 1: Get Campfire URL
+def _campfire_normalize_url(url: str | None) -> str:
+    """Prompt for and normalize Campfire URL."""
     if not url:
         url = _prompt("Campfire URL", default="http://campfire.localhost")
-
-    # Normalize URL
     url = url.rstrip("/")
     if not url.startswith(("http://", "https://")):
         url = f"http://{url}"
+    return url
 
-    click.echo()
-    click.echo(f"📍 Using Campfire at: {url}")
 
-    # Step 2: Check Campfire status
-    click.echo()
+def _campfire_check_status(url: str, no_browser: bool) -> None:  # length-ok
+    """Check Campfire reachability and initial setup status."""
     click.echo("─" * 40)
     click.echo("Checking Campfire Status")
     click.echo("─" * 40)
@@ -689,110 +663,132 @@ def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
         click.echo()
         if not _confirm("Continue anyway?", default=False):
             sys.exit(1)
+        return
+
+    click.echo("   ✅ Campfire is reachable")
+    if _check_campfire_setup_complete(url):
+        click.echo("   ✅ Campfire initial setup is complete")
     else:
-        click.echo(f"   ✅ Campfire is reachable")
+        click.echo("   ⚠️  Campfire initial setup may not be complete")
+        click.echo(f"      Open {url} to complete setup first")
+        if not no_browser and _confirm(
+            "Open Campfire in browser to complete setup?", default=True
+        ):
+            webbrowser.open(url)
+            click.echo()
+            _prompt("Press Enter when setup is complete")
 
-        if _check_campfire_setup_complete(url):
-            click.echo("   ✅ Campfire initial setup is complete")
-        else:
-            click.echo("   ⚠️  Campfire initial setup may not be complete")
-            click.echo(f"      Open {url} to complete setup first")
-            if not no_browser:
-                if _confirm("Open Campfire in browser to complete setup?", default=True):
-                    webbrowser.open(url)
-                    click.echo()
-                    _prompt("Press Enter when setup is complete")
 
-    # Step 3: Check for existing bot key in config
+def _campfire_check_existing_key(  # length-ok
+    url: str, bot_key: str | None, room_id: str | None
+) -> tuple[str | None, str | None]:
+    """Check for and validate existing bot key in config."""
+    if bot_key:
+        return bot_key, room_id
+
     existing_config = _load_config_yaml()
     existing_bot_key = (
         existing_config.get("channels", {}).get("campfire", {}).get("bot_key")
     )
 
-    if existing_bot_key and existing_bot_key != "${CAMPFIRE_BOT_KEY}" and not bot_key:
-        click.echo()
-        click.echo(f"   Found existing bot key in config: {existing_bot_key[:10]}...")
+    if not existing_bot_key or existing_bot_key == "${CAMPFIRE_BOT_KEY}":
+        return bot_key, room_id
 
-        # Test if existing key still works
-        test_room = room_id or "1"
-        success, result = _test_campfire_bot_key(url, test_room, existing_bot_key)
-        if success:
-            click.echo("   ✅ Existing bot key is valid!")
-            if _confirm("Use existing bot key?", default=True):
-                bot_key = existing_bot_key
-                # Try to find a valid room if not specified
-                if not room_id:
-                    found_room = _find_valid_room(url, bot_key)
-                    if found_room:
-                        room_id = found_room
-                        click.echo(f"   ✅ Found valid room: {room_id}")
-        else:
-            click.echo(f"   ⚠️  Existing bot key doesn't work ({result})")
+    click.echo()
+    click.echo(f"   Found existing bot key in config: {existing_bot_key[:10]}...")
 
-    # Step 4: Guide user to create bot if needed
-    if not bot_key:
-        click.echo()
-        click.echo("─" * 40)
-        click.echo("Step 1: Create a Bot in Campfire")
-        click.echo("─" * 40)
-        click.echo()
-        click.echo("You need to create a bot in Campfire's admin panel.")
-        click.echo()
-        click.echo("Bot settings to use:")
-        click.echo(f"  • Name: OpenPaws (or your preference)")
-        click.echo(f"  • Webhook URL: http://localhost:{webhook_port}/webhook")
-        click.echo()
+    test_room = room_id or "1"
+    success, result = _test_campfire_bot_key(url, test_room, existing_bot_key)
+    if not success:
+        click.echo(f"   ⚠️  Existing bot key doesn't work ({result})")
+        return bot_key, room_id
 
-        bot_url = f"{url}/account/bots"
+    click.echo("   ✅ Existing bot key is valid!")
+    if not _confirm("Use existing bot key?", default=True):
+        return bot_key, room_id
 
-        if not no_browser:
-            if _confirm("Open Campfire bot settings in browser?", default=True):
-                click.echo(f"   Opening {bot_url}...")
-                webbrowser.open(bot_url)
-                click.echo()
-
-        click.echo("After creating the bot, Campfire will show you curl commands like:")
-        click.echo()
-        click.echo(
-            f'  curl -d \'Hello!\' {url}/rooms/1/YOUR-BOT-KEY/messages'
-        )
-        click.echo()
-
-        # Get the curl command or bot key
-        click.echo("─" * 40)
-        click.echo("Step 2: Enter Bot Information")
-        click.echo("─" * 40)
-        click.echo()
-        click.echo("Paste one of the curl commands from Campfire, or just the bot key:")
-        click.echo()
-        user_input = _prompt("Curl command or bot key").strip()
-
-        # Try to parse as curl command first
-        parsed = _parse_campfire_curl(user_input)
-        if parsed:
-            _, parsed_room_id, bot_key = parsed
-            click.echo(f"   ✓ Extracted bot key: {bot_key}")
-            click.echo(f"   ✓ Extracted room ID: {parsed_room_id}")
-            if not room_id:
-                room_id = parsed_room_id
-        else:
-            # Assume it's just the bot key
-            bot_key = user_input
-            if "-" not in bot_key:
-                click.echo("   ⚠️  Bot key should be in format: ID-TOKEN (e.g., 2-rk2SGfi9lZW0)")
-
-    # Step 5: Get/find room ID if not provided
+    bot_key = existing_bot_key
     if not room_id:
-        click.echo()
-        click.echo("   Looking for available rooms...")
         found_room = _find_valid_room(url, bot_key)
         if found_room:
-            click.echo(f"   ✅ Found room {found_room}")
             room_id = found_room
-        else:
-            room_id = _prompt("Default room ID (from Campfire URL /rooms/N)", default="1")
+            click.echo(f"   ✅ Found valid room: {room_id}")
+    return bot_key, room_id
 
-    # Step 6: Test connection
+
+def _campfire_guide_bot_creation(  # length-ok
+    url: str, webhook_port: int, no_browser: bool
+) -> None:
+    """Display instructions for creating a bot in Campfire."""
+    click.echo()
+    click.echo("─" * 40)
+    click.echo("Step 1: Create a Bot in Campfire")
+    click.echo("─" * 40)
+    click.echo()
+    click.echo("You need to create a bot in Campfire's admin panel.")
+    click.echo()
+    click.echo("Bot settings to use:")
+    click.echo("  • Name: OpenPaws (or your preference)")
+    click.echo(f"  • Webhook URL: http://localhost:{webhook_port}/webhook")
+    click.echo()
+
+    bot_url = f"{url}/account/bots"
+    should_open = not no_browser and _confirm(
+        "Open Campfire bot settings in browser?", default=True
+    )
+    if should_open:
+        click.echo(f"   Opening {bot_url}...")
+        webbrowser.open(bot_url)
+        click.echo()
+
+    click.echo("After creating the bot, Campfire will show you curl commands like:")
+    click.echo()
+    click.echo(f"  curl -d 'Hello!' {url}/rooms/1/YOUR-BOT-KEY/messages")
+    click.echo()
+
+
+def _campfire_prompt_bot_key(room_id: str | None) -> tuple[str, str | None]:
+    """Prompt user for bot key (or curl command) and extract info."""
+    click.echo("─" * 40)
+    click.echo("Step 2: Enter Bot Information")
+    click.echo("─" * 40)
+    click.echo()
+    click.echo("Paste one of the curl commands from Campfire, or just the bot key:")
+    click.echo()
+    user_input = _prompt("Curl command or bot key").strip()
+
+    parsed = _parse_campfire_curl(user_input)
+    if parsed:
+        _, parsed_room_id, bot_key = parsed
+        click.echo(f"   ✓ Extracted bot key: {bot_key}")
+        click.echo(f"   ✓ Extracted room ID: {parsed_room_id}")
+        if not room_id:
+            room_id = parsed_room_id
+        return bot_key, room_id
+
+    if "-" not in user_input:
+        click.echo("   ⚠️  Bot key should be in format: ID-TOKEN (e.g., 2-rk2SGfi9lZW0)")
+    return user_input, room_id
+
+
+def _campfire_find_room_id(url: str, bot_key: str, room_id: str | None) -> str:
+    """Find or prompt for room ID."""
+    if room_id:
+        return room_id
+
+    click.echo()
+    click.echo("   Looking for available rooms...")
+    found_room = _find_valid_room(url, bot_key)
+    if found_room:
+        click.echo(f"   ✅ Found room {found_room}")
+        return found_room
+    return _prompt("Default room ID (from Campfire URL /rooms/N)", default="1")
+
+
+def _campfire_test_connection(  # length-ok
+    url: str, room_id: str, bot_key: str
+) -> tuple[bool, str]:
+    """Test connection and handle failures."""
     click.echo()
     click.echo("─" * 40)
     click.echo("Testing Connection")
@@ -803,29 +799,34 @@ def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
     success, result = _test_campfire_bot_key(url, room_id, bot_key)
     if success:
         click.echo("   ✅ Connection successful! Check Campfire for the test message.")
+        return True, room_id
+
+    if result == "invalid_key":
+        click.echo("   ❌ Bot key is invalid. Please check the key and try again.")
+    elif result == "invalid_room":
+        click.echo(f"   ❌ Room {room_id} doesn't exist. Bot key is valid though!")
+        click.echo("   Looking for a valid room...")
+        found_room = _find_valid_room(url, bot_key)
+        if found_room:
+            room_id = found_room
+            click.echo(f"   ✅ Found valid room: {room_id}")
+            retry_success, _ = _test_campfire_bot_key(url, room_id, bot_key)
+            if retry_success:
+                click.echo("   ✅ Connection successful!")
+                return True, room_id
     else:
-        if result == "invalid_key":
-            click.echo("   ❌ Bot key is invalid. Please check the key and try again.")
-        elif result == "invalid_room":
-            click.echo(f"   ❌ Room {room_id} doesn't exist. Bot key is valid though!")
-            # Try to find a valid room
-            click.echo("   Looking for a valid room...")
-            found_room = _find_valid_room(url, bot_key)
-            if found_room:
-                room_id = found_room
-                click.echo(f"   ✅ Found valid room: {room_id}")
-                # Test again with the found room
-                success, _ = _test_campfire_bot_key(url, room_id, bot_key)
-                if success:
-                    click.echo("   ✅ Connection successful!")
-        else:
-            click.echo(f"   ❌ Connection failed: {result}")
+        click.echo(f"   ❌ Connection failed: {result}")
 
-        if not success and not _confirm("Continue with setup anyway?", default=False):
-            click.echo("Setup cancelled.")
-            sys.exit(1)
+    if not _confirm("Continue with setup anyway?", default=False):
+        click.echo("Setup cancelled.")
+        sys.exit(1)
+    return False, room_id
 
-    # Step 5: Save configuration
+
+def _campfire_save_config(  # length-ok
+    url: str, bot_key: str, room_id: str, webhook_port: int
+) -> None:
+    """Save Campfire configuration to config.yaml."""
     click.echo()
     click.echo("─" * 40)
     click.echo("Step 4: Saving Configuration")
@@ -833,12 +834,9 @@ def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
     click.echo()
 
     config = _load_config_yaml()
-
-    # Ensure channels section exists
     if "channels" not in config:
         config["channels"] = {}
 
-    # Add/update campfire channel
     config["channels"]["campfire"] = {
         "base_url": url,
         "bot_key": bot_key,
@@ -846,7 +844,6 @@ def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
         "webhook_path": "/webhook",
     }
 
-    # Add a default group if none exists for campfire
     if "groups" not in config:
         config["groups"] = {}
 
@@ -866,10 +863,13 @@ def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
         click.echo(f"   Added group '{group_name}' for room {room_id}")
 
     _save_config_yaml(config)
-    config_file = _get_config_file()
-    click.echo(f"   ✅ Configuration saved to: {config_file}")
+    click.echo(f"   ✅ Configuration saved to: {_get_config_file()}")
 
-    # Final summary
+
+def _campfire_print_summary(
+    url: str, bot_key: str, room_id: str, webhook_port: int
+) -> None:
+    """Print final setup summary."""
     click.echo()
     click.echo("═" * 40)
     click.echo("🎉 Campfire Setup Complete!")
@@ -890,6 +890,37 @@ def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
     click.echo("  openpaws logs -f   # Follow logs")
     click.echo("  openpaws stop      # Stop daemon")
     click.echo()
+
+
+@setup.command("campfire")
+@click.option("--url", help="Campfire base URL (e.g., http://campfire.localhost)")
+@click.option("--bot-key", help="Bot key from Campfire (e.g., 2-rk2SGfi9lZW0)")
+@click.option("--room-id", help="Default room ID (e.g., 1)")
+@click.option("--webhook-port", default=8765, help="Local webhook port (default: 8765)")
+@click.option("--no-browser", is_flag=True, help="Don't open browser automatically")
+def setup_campfire(url, bot_key, room_id, webhook_port, no_browser):
+    """Interactive setup wizard for Campfire integration."""
+    click.echo()
+    click.echo("🏕️  Campfire Setup Wizard")
+    click.echo("═" * 40)
+    click.echo()
+
+    url = _campfire_normalize_url(url)
+    click.echo()
+    click.echo(f"📍 Using Campfire at: {url}")
+    click.echo()
+
+    _campfire_check_status(url, no_browser)
+    bot_key, room_id = _campfire_check_existing_key(url, bot_key, room_id)
+
+    if not bot_key:
+        _campfire_guide_bot_creation(url, webhook_port, no_browser)
+        bot_key, room_id = _campfire_prompt_bot_key(room_id)
+
+    room_id = _campfire_find_room_id(url, bot_key, room_id)
+    _, room_id = _campfire_test_connection(url, room_id, bot_key)
+    _campfire_save_config(url, bot_key, room_id, webhook_port)
+    _campfire_print_summary(url, bot_key, room_id, webhook_port)
 
 
 if __name__ == "__main__":

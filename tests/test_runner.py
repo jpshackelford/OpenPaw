@@ -73,34 +73,34 @@ class TestConversationRunner:
         """Test API key detection for Anthropic models."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
 
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            key = runner._get_api_key_for_model("anthropic/claude-sonnet-4-20250514")
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}, clear=True):
+            key = runner._get_api_key("anthropic/claude-sonnet-4-20250514")
             assert key == "test-key"
 
-            key = runner._get_api_key_for_model("claude-3-opus")
+            key = runner._get_api_key("claude-3-opus")
             assert key == "test-key"
 
     def test_get_api_key_openai(self, sample_config, temp_base_dir):
         """Test API key detection for OpenAI models."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
 
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "openai-key"}):
-            key = runner._get_api_key_for_model("openai/gpt-4")
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "openai-key"}, clear=True):
+            key = runner._get_api_key("openai/gpt-4")
             assert key == "openai-key"
 
-            key = runner._get_api_key_for_model("gpt-4-turbo")
+            key = runner._get_api_key("gpt-4-turbo")
             assert key == "openai-key"
 
     def test_get_api_key_google(self, sample_config, temp_base_dir):
         """Test API key detection for Google models."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
 
-        with patch.dict(os.environ, {"GOOGLE_API_KEY": "google-key"}):
-            key = runner._get_api_key_for_model("gemini/gemini-pro")
+        with patch.dict(os.environ, {"GOOGLE_API_KEY": "google-key"}, clear=True):
+            key = runner._get_api_key("gemini/gemini-pro")
             assert key == "google-key"
 
         with patch.dict(os.environ, {"GEMINI_API_KEY": "gemini-key"}, clear=True):
-            key = runner._get_api_key_for_model("google/gemini-pro")
+            key = runner._get_api_key("google/gemini-pro")
             assert key == "gemini-key"
 
     def test_get_api_key_fallback(self, sample_config, temp_base_dir):
@@ -108,7 +108,7 @@ class TestConversationRunner:
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
 
         with patch.dict(os.environ, {"LLM_API_KEY": "fallback-key"}, clear=True):
-            key = runner._get_api_key_for_model("some-other-model")
+            key = runner._get_api_key("some-other-model")
             assert key == "fallback-key"
 
     def test_get_group_workspace(self, sample_config, temp_base_dir):
@@ -135,7 +135,12 @@ class TestConversationRunner:
         """Test LLM creation with basic config."""
         runner = ConversationRunner(sample_config, base_dir=temp_base_dir)
 
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+        # Clear environment to ensure we use config values
+        with patch.dict(
+            os.environ,
+            {"ANTHROPIC_API_KEY": "test-key", "LLM_MODEL": "", "LLM_BASE_URL": ""},
+            clear=True,
+        ):
             llm = runner._create_llm()
 
             assert llm.model == "anthropic/claude-sonnet-4-20250514"
@@ -151,7 +156,10 @@ class TestConversationRunner:
         )
         runner = ConversationRunner(config, base_dir=temp_base_dir)
 
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+        # Clear LLM_BASE_URL to ensure we use the config value
+        with patch.dict(
+            os.environ, {"ANTHROPIC_API_KEY": "test-key", "LLM_BASE_URL": ""}, clear=True
+        ):
             llm = runner._create_llm()
 
             assert llm.base_url == "http://localhost:4000"
@@ -240,4 +248,5 @@ class TestRunMessage:
                 group_name="main",
                 prompt="Hello there!",
                 conversation_id=None,
+                send_callback=None,
             )
