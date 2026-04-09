@@ -117,6 +117,7 @@ config["channels"]["campfire"] = {
     "bot_key": existing_bot_key,
     "webhook_port": existing_campfire.get("webhook_port", 8765),
     "webhook_path": existing_campfire.get("webhook_path", "/webhook"),
+    "webhook_host": existing_campfire.get("webhook_host", "0.0.0.0"),
 }
 
 # Add a campfire group if no campfire groups exist
@@ -487,6 +488,7 @@ channels:
     # Webhook settings (OpenPaws receives messages here)
     webhook_port: 8765
     webhook_path: /webhook
+    webhook_host: "0.0.0.0"  # Required for Docker to reach host
 
 groups:
   campfire-main:
