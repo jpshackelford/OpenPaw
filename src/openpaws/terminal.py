@@ -122,16 +122,25 @@ class RealTerminalInput:
         """Check if stdin is connected to a TTY."""
         return sys.stdin.isatty()
 
+    def _read_char_fallback(self) -> str:
+        """Read a single character when stdin is not a TTY."""
+        try:
+            line = input()
+            return line[0] if line else "\n"
+        except EOFError:
+            return "\n"
+
+    def _read_line_fallback(self) -> str:
+        """Read a line when stdin is not a TTY."""
+        try:
+            return input()
+        except EOFError:
+            return ""
+
     def read_char(self) -> str:
         """Read a single character using raw terminal mode."""
         if not self._is_tty():
-            # Fallback for non-TTY: read first char of input line
-            try:
-                line = input()
-                return line[0] if line else "\n"
-            except EOFError:
-                return "\n"
-
+            return self._read_char_fallback()
         import termios
         import tty
 
@@ -143,15 +152,8 @@ class RealTerminalInput:
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
-    def read_line(self) -> str:
-        """Read a line using cbreak mode for character-by-character handling."""
-        if not self._is_tty():
-            # Fallback for non-TTY: use standard input
-            try:
-                return input()
-            except EOFError:
-                return ""
-
+    def _read_line_cbreak(self) -> str:
+        """Read a line in cbreak mode (TTY only)."""
         import termios
         import tty
 
@@ -165,6 +167,12 @@ class RealTerminalInput:
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         return "".join(result)
+
+    def read_line(self) -> str:
+        """Read a line using cbreak mode for character-by-character handling."""
+        if not self._is_tty():
+            return self._read_line_fallback()
+        return self._read_line_cbreak()
 
     def confirm(self, prompt: str, default: bool = True) -> bool:
         """Prompt for yes/no confirmation."""

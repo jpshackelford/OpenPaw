@@ -177,15 +177,16 @@ class CampfireAdapter(ChannelAdapter):
             send_status=self._make_status_callback(room_id, msg_id),
         )
 
-    async def _handle_webhook(self, request: web.Request) -> web.Response:
-        """Handle incoming webhook POST from Campfire.
+    def _spawn_background_task(self, coro) -> None:
+        """Spawn a background task and track it for cleanup during shutdown."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
-        Acknowledges immediately and processes the message in the background.
-        Response is sent back to Campfire via the API when ready.
-        """
+    async def _handle_webhook(self, request: web.Request) -> web.Response:
+        """Handle incoming webhook POST from Campfire."""
         if self._message_handler is None:
             return web.Response(status=503, text="Handler not ready")
-
         try:
             payload = await request.json()
         except Exception as e:
@@ -193,17 +194,8 @@ class CampfireAdapter(ChannelAdapter):
             return web.Response(status=400, text="Invalid JSON")
 
         incoming = self._create_incoming_message(payload)
-        logger.info(
-            f"Received message from {incoming.user_name} in room {incoming.channel_id}"
-        )
-
-        # Process message in background - don't block the webhook response
-        # Track task for proper cleanup during shutdown
-        task = asyncio.create_task(self._process_message_async(incoming))
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
-
-        # Acknowledge receipt immediately (204 No Content - no body for Campfire)
+        logger.info(f"Received message from {incoming.user_name} in {incoming.channel_id}")
+        self._spawn_background_task(self._process_message_async(incoming))
         return web.Response(status=204)
 
     def _add_context_to_message(
