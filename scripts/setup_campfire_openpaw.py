@@ -282,7 +282,7 @@ def install_once_cli() -> None:
 # Default Campfire image - use fork with bot read API until PR is merged
 # PR: https://github.com/basecamp/once-campfire/pull/190
 # Once merged, switch back to: ghcr.io/basecamp/once-campfire
-CAMPFIRE_IMAGE_DEFAULT = "ghcr.io/jpshackelford/once-campfire:bot-read-messages"
+CAMPFIRE_IMAGE_DEFAULT = "ghcr.io/jpshackelford/once-campfire:bot-api-v2"
 CAMPFIRE_IMAGE_OFFICIAL = "ghcr.io/basecamp/once-campfire"
 
 

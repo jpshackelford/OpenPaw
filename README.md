@@ -167,7 +167,7 @@ python scripts/setup_campfire_openpaw.py --disable-tls
 If you already have Campfire deployed with the official image, update to the fork:
 
 ```bash
-once update campfire.localhost --image ghcr.io/jpshackelford/once-campfire:bot-read-messages
+once update campfire.localhost --image ghcr.io/jpshackelford/once-campfire:bot-api-v2
 ```
 
 To switch back to the official image (without conversation context):
