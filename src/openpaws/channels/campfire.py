@@ -337,6 +337,15 @@ class CampfireAdapter(ChannelAdapter):
             logger.warning(f"Could not fetch room context: {e}")
         return None
 
+    def _get_context_limit(self) -> int:
+        """Get context message limit, applying hard cap and logging if needed."""
+        if self._config.context_messages > MAX_CONTEXT_MESSAGES:
+            logger.warning(
+                f"Context messages capped at {MAX_CONTEXT_MESSAGES} "
+                f"(configured: {self._config.context_messages})"
+            )
+        return min(self._config.context_messages, MAX_CONTEXT_MESSAGES)
+
     async def fetch_room_context(
         self, room_id: str, before_message_id: str | None = None
     ) -> list[dict]:
@@ -352,15 +361,8 @@ class CampfireAdapter(ChannelAdapter):
         messages = await self._fetch_messages_from_api(url, params)
         if messages is None:
             return []
-        # Apply hard cap, then take configured amount
-        limit = min(self._config.context_messages, MAX_CONTEXT_MESSAGES)
-        if self._config.context_messages > MAX_CONTEXT_MESSAGES:
-            logger.warning(
-                f"Context messages capped at {MAX_CONTEXT_MESSAGES} "
-                f"(configured: {self._config.context_messages})"
-            )
         # API returns newest-first; take first N (most recent) then reverse
-        limited = messages[:limit]
+        limited = messages[: self._get_context_limit()]
         return list(reversed(limited))
 
     def _format_single_context_message(self, msg: dict) -> str:
