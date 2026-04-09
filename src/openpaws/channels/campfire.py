@@ -11,7 +11,13 @@ Configuration:
         bot_key: ${CAMPFIRE_BOT_KEY}    # 123-abc123xyz456
         webhook_port: 8765              # Local port for webhook server
         webhook_path: /webhook          # Path for webhook endpoint
+        webhook_host: 127.0.0.1         # Bind address (use 0.0.0.0 for Docker)
         context_messages: 10            # Number of recent messages for context
+
+Security Note:
+    The webhook_host defaults to 127.0.0.1 (localhost only) for security.
+    Only change to 0.0.0.0 if running in Docker and Campfire needs to reach
+    the webhook from the host network. A warning is logged when using 0.0.0.0.
 
 See docs/CAMPFIRE_SETUP.md for detailed setup instructions.
 
@@ -43,6 +49,15 @@ ROOM_PATH_PATTERN = re.compile(r"/rooms/(\d+)/")
 DEFAULT_CONTEXT_MESSAGES = 10
 
 
+# Default webhook host - 127.0.0.1 for security (local only)
+# Use "0.0.0.0" when running in Docker and receiving webhooks from host
+DEFAULT_WEBHOOK_HOST = "127.0.0.1"
+
+# Maximum characters for conversation context to avoid LLM token limits
+# Roughly ~1000 tokens, leaving room for the actual message
+MAX_CONTEXT_CHARS = 4000
+
+
 @dataclass
 class CampfireConfig:
     """Configuration for Campfire adapter.
@@ -52,6 +67,7 @@ class CampfireConfig:
         bot_key: Bot authentication key in format {id}-{token}
         webhook_port: Local port to listen for webhook callbacks
         webhook_path: URL path for the webhook endpoint
+        webhook_host: Host to bind webhook server to (default: 127.0.0.1 for security)
         context_messages: Number of recent messages to fetch for context (0 to disable)
     """
 
@@ -59,6 +75,7 @@ class CampfireConfig:
     bot_key: str
     webhook_port: int = 8765
     webhook_path: str = "/webhook"
+    webhook_host: str = DEFAULT_WEBHOOK_HOST
     context_messages: int = DEFAULT_CONTEXT_MESSAGES
 
     def __post_init__(self):
@@ -245,7 +262,8 @@ class CampfireAdapter(ChannelAdapter):
         self._app = self._setup_routes()
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
-        self._site = web.TCPSite(self._runner, "0.0.0.0", self._config.webhook_port)
+        host = self._config.webhook_host
+        self._site = web.TCPSite(self._runner, host, self._config.webhook_port)
         await self._site.start()
 
     async def start(self, message_handler: MessageHandler) -> None:
@@ -257,10 +275,11 @@ class CampfireAdapter(ChannelAdapter):
         self._http_session = ClientSession()
         await self._start_web_server()
         self._running = True
+        host = self._config.webhook_host
         port, path = self._config.webhook_port, self._config.webhook_path
-        logger.info(
-            f"Campfire adapter started - webhook on http://0.0.0.0:{port}{path}"
-        )
+        if host == "0.0.0.0":
+            logger.warning("Webhook bound to 0.0.0.0 - accessible from all interfaces")
+        logger.info(f"Campfire adapter started - webhook on http://{host}:{port}{path}")
 
     async def _cleanup_resources(self) -> None:
         """Clean up all adapter resources."""
@@ -339,6 +358,16 @@ class CampfireAdapter(ChannelAdapter):
         text = msg.get("body", {}).get("plain", "")
         return f"**{name}**: {text}"
 
+    def _truncate_context_if_needed(self, context_text: str) -> str:
+        """Truncate context if it exceeds maximum length to avoid LLM token limits."""
+        if len(context_text) <= MAX_CONTEXT_CHARS:
+            return context_text
+        logger.warning(
+            f"Context truncated from {len(context_text)} to {MAX_CONTEXT_CHARS} chars"
+        )
+        # Keep the most recent part of the context (end of string)
+        return "...[earlier context truncated]...\n" + context_text[-MAX_CONTEXT_CHARS:]
+
     def _format_context_for_prompt(
         self, messages: list[dict], current_user: str
     ) -> str:
@@ -348,7 +377,8 @@ class CampfireAdapter(ChannelAdapter):
         header = "Here is the recent conversation context from this chat room:\n"
         body = "\n".join(self._format_single_context_message(m) for m in messages)
         footer = f"\n\n---\nNow {current_user} says:\n"
-        return f"{header}\n{body}{footer}"
+        full_context = f"{header}\n{body}{footer}"
+        return self._truncate_context_if_needed(full_context)
 
     async def _handle_send_response(self, resp, channel_id: str) -> None:
         """Handle response from message send API."""

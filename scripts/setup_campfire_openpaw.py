@@ -307,8 +307,6 @@ def ensure_hosts_entry(hostname: str) -> bool:
         log_success(f"Hostname {hostname} resolves correctly")
         return True
 
-    log_info(f"Hostname {hostname} does not resolve - adding to /etc/hosts...")
-
     # Check if entry already exists in hosts file (but DNS not resolving yet)
     result = run_command(
         ["grep", "-q", hostname, "/etc/hosts"], check=False, capture=True
@@ -317,6 +315,15 @@ def ensure_hosts_entry(hostname: str) -> bool:
         # Entry exists but not resolving - might be a DNS cache issue
         log_warn(f"Entry for {hostname} exists in /etc/hosts but not resolving")
         log_info("Try flushing DNS cache: sudo dscacheutil -flushcache")
+        return False
+
+    # Warn user about /etc/hosts modification before proceeding
+    log_warn("⚠️  This script needs to modify /etc/hosts (requires sudo)")
+    print(f"   Will add: 127.0.0.1 {hostname}")
+    if not prompt_yes_no("Continue with /etc/hosts modification?", default=False):
+        log_info("Skipped /etc/hosts modification")
+        manual_cmd = f"echo '127.0.0.1 {hostname}' | sudo tee -a /etc/hosts"
+        log_info(f"Please run manually: {manual_cmd}")
         return False
 
     # Add the entry (requires sudo)
