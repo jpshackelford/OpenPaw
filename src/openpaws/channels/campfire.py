@@ -194,7 +194,7 @@ class CampfireAdapter(ChannelAdapter):
             return web.Response(status=400, text="Invalid JSON")
 
         incoming = self._create_incoming_message(payload)
-        logger.info(f"Received message from {incoming.user_name} in {incoming.channel_id}")
+        logger.info(f"Received from {incoming.user_name} in {incoming.channel_id}")
         self._spawn_background_task(self._process_message_async(incoming))
         return web.Response(status=204)
 
