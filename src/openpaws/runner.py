@@ -156,22 +156,16 @@ class ConversationRunner:
 
     def _build_llm_kwargs(self) -> dict[str, Any]:
         """Build kwargs dict for LLM constructor."""
-        agent_config = self.config.agent
         model = self._get_model()
         kwargs: dict[str, Any] = {"model": model}
-
-        api_key = self._get_api_key(model)
-        if api_key:
+        if api_key := self._get_api_key(model):
             kwargs["api_key"] = SecretStr(api_key)
-
-        base_url = self._get_base_url()
-        if base_url:
+        if base_url := self._get_base_url():
             kwargs["base_url"] = base_url
-
-        if agent_config.temperature is not None:
-            kwargs["temperature"] = agent_config.temperature
-        if agent_config.max_tokens is not None:
-            kwargs["max_output_tokens"] = agent_config.max_tokens
+        if (temp := self.config.agent.temperature) is not None:
+            kwargs["temperature"] = temp
+        if (tokens := self.config.agent.max_tokens) is not None:
+            kwargs["max_output_tokens"] = tokens
         return kwargs
 
     def _create_llm(self) -> LLM:

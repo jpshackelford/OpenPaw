@@ -274,28 +274,24 @@ class CampfireAdapter(ChannelAdapter):
             f"http://0.0.0.0:{self._config.webhook_port}{self._config.webhook_path}"
         )
 
+    async def _cleanup_resources(self) -> None:
+        """Clean up all adapter resources."""
+        if self._site:
+            await self._site.stop()
+        if self._runner:
+            await self._runner.cleanup()
+        if self._http_session:
+            await self._http_session.close()
+        self._site = self._runner = self._http_session = self._app = None
+        self._message_handler = None
+
     async def stop(self) -> None:
         """Stop the Campfire adapter."""
         if not self._running:
             return
-
         logger.info("Stopping Campfire adapter")
         self._running = False
-
-        if self._site:
-            await self._site.stop()
-            self._site = None
-
-        if self._runner:
-            await self._runner.cleanup()
-            self._runner = None
-
-        if self._http_session:
-            await self._http_session.close()
-            self._http_session = None
-
-        self._app = None
-        self._message_handler = None
+        await self._cleanup_resources()
 
     def _build_message_url(self, room_id: str) -> str:
         """Build URL for posting messages to a room."""
