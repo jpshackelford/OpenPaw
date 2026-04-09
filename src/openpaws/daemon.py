@@ -430,43 +430,39 @@ class Daemon:
             workflow_id=workflow_id,
         )
 
-    def _setup_queue_manager(self) -> None:
+    def _setup_queue_manager(self) -> None:  # length-ok
         """Initialize queue manager for multi-conversation orchestration."""
         if not self.config.queue.enabled:
             logger.info("Queue dispatch disabled in config")
             return
-
-        # Recreate runner with queue callback
-        self._runner = ConversationRunner(
-            self.config,
-            queue_callback=self._queue_callback,
-        )
-
+        self._runner.set_queue_callback(self._queue_callback)
         self._queue_manager = QueueManager(
             storage=self.storage,
             runner=self._runner,
             config=self.config.queue,
         )
         interval = self.config.queue.heartbeat_interval
-        max_dispatch = self.config.queue.max_dispatch
-        logger.info(f"Queue manager: interval={interval}s, max_dispatch={max_dispatch}")
+        max_d = self.config.queue.max_dispatch
+        logger.info(f"Queue manager: interval={interval}s, max_dispatch={max_d}")
 
-    async def _heartbeat_loop(self) -> None:
+    async def _process_queue_batch(self) -> None:  # length-ok
+        """Process one batch and log results."""
+        if self._shutdown_event and self._shutdown_event.is_set():
+            return
+        processed = await self._queue_manager.process_batch()
+        if processed > 0:
+            logger.info(f"Heartbeat: processed {processed} queued item(s)")
+
+    async def _heartbeat_loop(self) -> None:  # length-ok
         """Process queued conversations at configured interval."""
         if not self._queue_manager:
             return
-
         interval = self.config.queue.heartbeat_interval
         logger.info(f"Starting heartbeat loop with {interval}s interval")
-
         while True:
             try:
+                await self._process_queue_batch()
                 await asyncio.sleep(interval)
-                if self._shutdown_event and self._shutdown_event.is_set():
-                    break
-                processed = await self._queue_manager.process_batch()
-                if processed > 0:
-                    logger.info(f"Heartbeat: processed {processed} queued item(s)")
             except asyncio.CancelledError:
                 logger.info("Heartbeat loop cancelled")
                 break

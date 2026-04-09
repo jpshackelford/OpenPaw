@@ -453,22 +453,16 @@ def queue():
     pass
 
 
+_STATUS_EMOJI = {"pending": "⏳", "processing": "🔄", "completed": "✅", "failed": "❌"}
+
+
 def _format_queue_item(item) -> None:
     """Print a single queue item row."""
-    status_emoji = {
-        "pending": "⏳",
-        "processing": "🔄",
-        "completed": "✅",
-        "failed": "❌",
-    }.get(item.status, "❓")
-
-    prompt_preview = item.prompt[:40] + "..." if len(item.prompt) > 40 else item.prompt
+    emoji = _STATUS_EMOJI.get(item.status, "❓")
+    prompt = item.prompt[:40] + "..." if len(item.prompt) > 40 else item.prompt
     created = item.created_at.strftime("%Y-%m-%d %H:%M") if item.created_at else "-"
-    click.echo(
-        f"  {status_emoji} {item.id[:8]}  "
-        f"p={item.priority}  {item.group_name:<10}  "
-        f"{created}  {prompt_preview}"
-    )
+    click.echo(f"  {emoji} {item.id[:8]}  p={item.priority}  {item.group_name:<10}")
+    click.echo(f"      {created}  {prompt}")
 
 
 @queue.command("list")
@@ -507,6 +501,21 @@ def queue_stats():
     click.echo(f"  Total:       {total:>6}")
 
 
+def _clear_all_queue_items(storage: Storage, yes: bool) -> int:
+    """Clear all queue items with confirmation."""
+    if not yes:
+        click.confirm("⚠️  This will delete ALL queue items. Continue?", abort=True)
+    statuses = ["pending", "processing", "completed", "failed"]
+    return sum(storage.clear_queue(status=s) for s in statuses)
+
+
+def _clear_queue_by_status(storage: Storage, status: str, yes: bool) -> int:
+    """Clear queue items by status with confirmation."""
+    if not yes:
+        click.confirm(f"Delete all '{status}' queue items?", abort=True)
+    return storage.clear_queue(status=status)
+
+
 @queue.command("clear")
 @click.option(
     "--status", "-s",
@@ -518,26 +527,20 @@ def queue_stats():
 def queue_clear(status, yes):
     """Clear queue items by status."""
     storage = Storage()
-
     if status == "all":
-        if not yes:
-            click.confirm(
-                "⚠️  This will delete ALL queue items. Continue?",
-                abort=True,
-            )
-        # Clear all statuses
-        deleted = 0
-        for s in ["pending", "processing", "completed", "failed"]:
-            deleted += storage.clear_queue(status=s)
+        deleted = _clear_all_queue_items(storage, yes)
     else:
-        if not yes:
-            click.confirm(
-                f"Delete all '{status}' queue items?",
-                abort=True,
-            )
-        deleted = storage.clear_queue(status=status)
-
+        deleted = _clear_queue_by_status(storage, status, yes)
     click.echo(f"🗑️  Deleted {deleted} queue item(s)")
+
+
+def _validate_group_exists(group: str) -> None:
+    """Validate group exists in config, abort if not."""
+    config = _get_config_or_empty()
+    if group not in config.groups:
+        click.echo(f"❌ Error: Group '{group}' not found", err=True)
+        click.echo(f"Available groups: {', '.join(config.groups.keys()) or '(none)'}")
+        raise click.Abort()
 
 
 @queue.command("add")
@@ -549,6 +552,7 @@ def queue_add(prompt, group, priority, workflow_id):
     """Manually add a conversation to the queue."""
     from openpaws.storage import QueueItem
 
+    _validate_group_exists(group)
     storage = Storage()
     item = QueueItem.create(
         prompt=prompt,

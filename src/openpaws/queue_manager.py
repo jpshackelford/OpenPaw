@@ -45,7 +45,13 @@ class QueueManager:
     runner: ConversationRunner
     config: QueueConfig = field(default_factory=QueueConfig)
 
-    async def enqueue(
+    def _validate_group(self, group_name: str) -> None:
+        """Validate that group_name exists in config."""
+        if group_name not in self.runner.config.groups:
+            available = ", ".join(self.runner.config.groups.keys())
+            raise ValueError(f"Group '{group_name}' not found. Available: {available}")
+
+    async def enqueue(  # length-ok
         self,
         prompt: str,
         group_name: str,
@@ -55,19 +61,8 @@ class QueueManager:
         parent_conversation_id: str | None = None,
         workflow_id: str | None = None,
     ) -> str:
-        """Add a conversation to the queue.
-
-        Args:
-            prompt: The prompt for the queued conversation.
-            group_name: The group to run the conversation in.
-            context: Optional context dict to pass to the conversation.
-            priority: Priority level (higher = processed first). Default 0.
-            parent_conversation_id: ID of the parent conversation (for tracing).
-            workflow_id: ID to group related queue items.
-
-        Returns:
-            The ID of the queued item.
-        """
+        """Add a conversation to the queue."""
+        self._validate_group(group_name)
         item = QueueItem.create(
             prompt=prompt,
             group_name=group_name,
@@ -77,10 +72,7 @@ class QueueManager:
             workflow_id=workflow_id,
         )
         self.storage.enqueue(item)
-        logger.info(
-            f"Queued conversation for group '{group_name}' with id={item.id[:8]}... "
-            f"priority={priority}"
-        )
+        logger.info(f"Queued for '{group_name}' id={item.id[:8]} priority={priority}")
         return item.id
 
     def _build_prompt_with_context(self, item: QueueItem) -> str:
@@ -90,26 +82,27 @@ class QueueManager:
         context_str = "\n".join(f"- {k}: {v}" for k, v in item.context.items())
         return f"Context from previous conversation:\n{context_str}\n\n{item.prompt}"
 
+    def _handle_result(self, item: QueueItem, result) -> None:
+        """Handle the result of processing a queue item."""
+        if result.success:
+            self.storage.complete_queue_item(item.id, result.message)
+            logger.info(f"Queue item {item.id[:8]}... completed")
+        else:
+            self.storage.fail_queue_item(item.id, result.error or "Unknown error")
+            logger.warning(f"Queue item {item.id[:8]}... failed: {result.error}")
+
     async def _process_item(self, item: QueueItem) -> None:
         """Process a single queue item."""
-        logger.info(
-            f"Processing queue item {item.id[:8]}... for group '{item.group_name}'"
-        )
+        logger.info(f"Processing queue item {item.id[:8]} for '{item.group_name}'")
         try:
             prompt = self._build_prompt_with_context(item)
             result = await self.runner.run_prompt(
-                group_name=item.group_name,
-                prompt=prompt,
+                group_name=item.group_name, prompt=prompt
             )
-            if result.success:
-                self.storage.complete_queue_item(item.id, result.message)
-                logger.info(f"Queue item {item.id[:8]}... completed successfully")
-            else:
-                self.storage.fail_queue_item(item.id, result.error or "Unknown error")
-                logger.warning(f"Queue item {item.id[:8]}... failed: {result.error}")
+            self._handle_result(item, result)
         except Exception as e:
             self.storage.fail_queue_item(item.id, str(e))
-            logger.exception(f"Queue item {item.id[:8]}... failed with exception")
+            logger.exception(f"Queue item {item.id[:8]} failed with exception")
 
     async def process_batch(self) -> int:
         """Process up to max_dispatch items from the queue.

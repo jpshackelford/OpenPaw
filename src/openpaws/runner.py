@@ -119,6 +119,10 @@ class ConversationRunner:
         # Note: Agent is not cached because it may need different tools per conversation
         # (e.g., different send_callback for different channels)
 
+    def set_queue_callback(self, callback: QueueCallback) -> None:
+        """Set or update the queue callback after initialization."""
+        self._queue_callback = callback
+
     @property
     def llm(self) -> LLM:
         """Get or create the LLM instance."""

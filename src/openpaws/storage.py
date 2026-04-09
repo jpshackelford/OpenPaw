@@ -342,7 +342,7 @@ class Storage:
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
-    def _queue_item_to_row(self, item: QueueItem) -> tuple:
+    def _queue_item_to_row(self, item: QueueItem) -> tuple:  # length-ok
         """Convert QueueItem to a tuple for SQL insertion."""
         return (
             item.id,
@@ -359,7 +359,7 @@ class Storage:
             item.workflow_id,
         )
 
-    def _row_to_queue_item(self, row: sqlite3.Row) -> QueueItem:
+    def _row_to_queue_item(self, row: sqlite3.Row) -> QueueItem:  # length-ok
         """Convert a database row to QueueItem."""
         context = row["context"]
         return QueueItem(

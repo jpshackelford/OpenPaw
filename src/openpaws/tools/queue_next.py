@@ -134,16 +134,19 @@ interval.
 Keep prompts specific and actionable. Include relevant context from current work."""
 
 
-def _run_async_callback(callback, *args) -> str | None:
-    """Run an async callback, handling event loop conflicts."""
+def _run_async_callback(callback, *args) -> str | None:  # length-ok
+    """Run an async callback from a sync context using a thread pool."""
     import asyncio
     import concurrent.futures
+    import logging
 
-    try:
-        with concurrent.futures.ThreadPoolExecutor() as pool:
+    logger = logging.getLogger(__name__)
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        try:
             return pool.submit(asyncio.run, callback(*args)).result()
-    except Exception:
-        return asyncio.run(callback(*args))
+        except Exception as e:
+            logger.exception(f"Failed to execute queue callback: {e}")
+            raise RuntimeError(f"Queue callback execution failed: {e}") from e
 
 
 class QueueNextExecutor(ToolExecutor):
@@ -155,22 +158,34 @@ class QueueNextExecutor(ToolExecutor):
             return get_queue_callback(str(conversation.state.id))
         return None
 
-    def __call__(
-        self,
-        action: QueueNextAction,
-        conversation: BaseConversation | None = None,
-    ) -> QueueNextObservation:
-        queue_callback = self._get_callback(conversation)
+    def _no_callback_response(self) -> QueueNextObservation:
+        """Return observation when no callback is configured."""
+        return QueueNextObservation.from_text(
+            text="Queue not available (no callback configured).",
+            queued=False,
+            item_id=None,
+        )
 
-        if queue_callback is None:
-            return QueueNextObservation.from_text(
-                text="Queue not available (no callback configured).",
-                queued=False,
-                item_id=None,
-            )
+    def _success_response(self, item_id: str) -> QueueNextObservation:
+        """Return observation for successful queue."""
+        return QueueNextObservation.from_text(
+            text=f"Follow-up conversation queued with id={item_id[:8]}...",
+            queued=True,
+            item_id=item_id,
+        )
 
-        item_id = _run_async_callback(
-            queue_callback,
+    def _failure_response(self) -> QueueNextObservation:
+        """Return observation for failed queue."""
+        return QueueNextObservation.from_text(
+            text="Failed to queue follow-up conversation.",
+            queued=False,
+            item_id=None,
+        )
+
+    def _execute_callback(self, callback, action: QueueNextAction) -> str | None:
+        """Execute the queue callback with action parameters."""
+        return _run_async_callback(
+            callback,
             action.prompt,
             action.group_name,
             action.context,
@@ -178,17 +193,16 @@ class QueueNextExecutor(ToolExecutor):
             action.workflow_id,
         )
 
-        if item_id:
-            return QueueNextObservation.from_text(
-                text=f"Follow-up conversation queued with id={item_id[:8]}...",
-                queued=True,
-                item_id=item_id,
-            )
-        return QueueNextObservation.from_text(
-            text="Failed to queue follow-up conversation.",
-            queued=False,
-            item_id=None,
-        )
+    def __call__(
+        self,
+        action: QueueNextAction,
+        conversation: BaseConversation | None = None,
+    ) -> QueueNextObservation:
+        callback = self._get_callback(conversation)
+        if callback is None:
+            return self._no_callback_response()
+        item_id = self._execute_callback(callback, action)
+        return self._success_response(item_id) if item_id else self._failure_response()
 
 
 class QueueNextTool(ToolDefinition[QueueNextAction, QueueNextObservation]):

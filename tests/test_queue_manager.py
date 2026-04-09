@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from openpaws.config import QueueConfig
+from openpaws.config import GroupConfig, QueueConfig
 from openpaws.queue_manager import QueueManager
 from openpaws.runner import ConversationResult
 from openpaws.storage import Storage
@@ -19,11 +19,16 @@ def storage(tmp_path):
 
 @pytest.fixture
 def mock_runner():
-    """Create a mock runner."""
+    """Create a mock runner with config containing 'main' group."""
     runner = MagicMock()
     runner.run_prompt = AsyncMock(
         return_value=ConversationResult(success=True, message="Test response")
     )
+    # Add config with groups for validation
+    runner.config = MagicMock()
+    runner.config.groups = {
+        "main": GroupConfig(name="main", channel="test", chat_id="123")
+    }
     return runner
 
 
@@ -93,6 +98,15 @@ class TestEnqueue:
         item = storage.load_queue_item(item_id)
         assert item.workflow_id == "workflow-123"
         assert item.parent_conversation_id == "parent-456"
+
+    @pytest.mark.asyncio
+    async def test_enqueue_invalid_group(self, queue_manager):
+        """Test enqueueing with a group that doesn't exist."""
+        with pytest.raises(ValueError, match="not found"):
+            await queue_manager.enqueue(
+                prompt="Test prompt",
+                group_name="nonexistent",
+            )
 
 
 class TestProcessBatch:
@@ -274,7 +288,9 @@ class TestBuildPromptWithContext:
         from openpaws.storage import QueueItem
 
         item = QueueItem.create(
-            prompt="Test prompt", group_name="main", context={"key1": "val1", "key2": "val2"}
+            prompt="Test prompt",
+            group_name="main",
+            context={"key1": "val1", "key2": "val2"},
         )
         result = queue_manager._build_prompt_with_context(item)
         assert "Context from previous conversation:" in result
