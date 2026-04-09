@@ -341,7 +341,11 @@ class Daemon:
             return None
         adapter = self._channel_adapters_by_type.get(group.channel)
         if not adapter or not adapter.is_running():
-            logger.warning(f"Adapter for '{group.channel}' not available")
+            # Error level because task result will be lost if adapter is down
+            logger.error(
+                f"Adapter '{group.channel}' not running, task result lost "
+                f"for '{task.config.name}'"
+            )
             return None
         return adapter, group
 
