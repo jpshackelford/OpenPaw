@@ -192,30 +192,23 @@ class ConversationRunner:
             Tool(name=SendStatusTool.name),
         ]
 
+    def _build_custom_instructions(self) -> str:
+        """Build custom instructions with chat response guidelines."""
+        base = CHAT_RESPONSE_INSTRUCTIONS
+        if self.config.agent.system_prompt:
+            return f"{self.config.agent.system_prompt}\n\n{base}"
+        return base
+
     def _create_agent(self) -> Agent:
         """Create an Agent instance with default tools."""
-        agent_config = self.config.agent
-
-        agent_kwargs: dict[str, Any] = {
-            "llm": self.llm,
-            "tools": self._get_default_tools(),
-            "condenser": get_default_condenser(
+        return Agent(
+            llm=self.llm,
+            tools=self._get_default_tools(),
+            condenser=get_default_condenser(
                 llm=self.llm.model_copy(update={"usage_id": "condenser"})
             ),
-        }
-
-        # Build custom instructions with chat response guidelines
-        custom_instructions = CHAT_RESPONSE_INSTRUCTIONS
-        if agent_config.system_prompt:
-            custom_instructions = (
-                f"{agent_config.system_prompt}\n\n{custom_instructions}"
-            )
-
-        agent_kwargs["system_prompt_kwargs"] = {
-            "custom_instructions": custom_instructions
-        }
-
-        return Agent(**agent_kwargs)
+            system_prompt_kwargs={"custom_instructions": self._build_custom_instructions()},
+        )
 
     def _get_group_workspace(self, group: GroupConfig) -> Path:
         """Get the workspace directory for a group."""
@@ -280,45 +273,35 @@ class ConversationRunner:
             error=str(e),
         )
 
-    async def run_prompt(
-        self,
-        group_name: str,
-        prompt: str,
-        *,
-        conversation_id: UUID | None = None,
-        callbacks: list | None = None,
-        send_callback: SendCallback | None = None,
+    async def _execute_prompt(
+        self, group: GroupConfig, prompt: str, conversation_id, callbacks, send_callback
     ) -> ConversationResult:
-        """Run a conversation with a prompt for a specific group.
-
-        Args:
-            group_name: Name of the group to run the conversation for.
-            prompt: The user's message/prompt.
-            conversation_id: Optional conversation ID for persistence.
-            callbacks: Optional list of event callbacks.
-            send_callback: Optional callback for sending status messages to the channel.
-        """
-        group = self.config.groups.get(group_name)
-        if not group:
-            return self._group_not_found_result(group_name)
-
+        """Execute the prompt with callback registration and cleanup."""
         events: list[Event] = []
         all_callbacks = self._build_callbacks(events, callbacks)
         conv = None
         try:
             conv = self._create_conversation(group, conversation_id, all_callbacks)
-
-            # Register the send callback in the registry so SendStatusTool can find it
             if send_callback:
                 register_send_callback(str(conv.state.id), send_callback)
-
             return self._run_conversation(conv, prompt, events)
         except Exception as e:
             return self._conversation_error(e, events)
         finally:
-            # Always unregister the callback to prevent memory leaks
             if conv:
                 unregister_send_callback(str(conv.state.id))
+
+    async def run_prompt(
+        self, group_name: str, prompt: str, *, conversation_id: UUID | None = None,
+        callbacks: list | None = None, send_callback: SendCallback | None = None,
+    ) -> ConversationResult:
+        """Run a conversation with a prompt for a specific group."""
+        group = self.config.groups.get(group_name)
+        if not group:
+            return self._group_not_found_result(group_name)
+        return await self._execute_prompt(
+            group, prompt, conversation_id, callbacks, send_callback
+        )
 
     def _group_not_found_result(self, group_name: str) -> ConversationResult:
         """Return a failure result for unknown group."""
@@ -358,28 +341,34 @@ class ConversationRunner:
             send_callback=send_callback,
         )
 
+    def _extract_finish_action_message(self, event) -> str | None:
+        """Extract message from FinishAction event if present."""
+        from openhands.sdk.event import ActionEvent
+
+        if not isinstance(event, ActionEvent):
+            return None
+        action = getattr(event, "action", None)
+        if action and getattr(action, "kind", None) == "FinishAction":
+            return getattr(action, "message", None)
+        return None
+
+    def _extract_assistant_message(self, event) -> str | None:
+        """Extract text from assistant message event if present."""
+        from openhands.sdk.event import MessageEvent
+
+        if not isinstance(event, MessageEvent):
+            return None
+        msg = event.llm_message
+        if msg.role == "assistant" and msg.content:
+            texts = [c.text for c in msg.content if hasattr(c, "text")]
+            return "\n".join(texts) if texts else None
+        return None
+
     def _extract_final_response(self, events: list[Event]) -> str:
-        """Extract the final agent response from events.
-
-        Looks for FinishAction (tool call) or assistant message.
-        """
-        from openhands.sdk.event import ActionEvent, MessageEvent
-
+        """Extract the final agent response from events."""
         for event in reversed(events):
-            # Check for FinishAction (agent used finish tool)
-            if isinstance(event, ActionEvent):
-                action = getattr(event, "action", None)
-                if action and getattr(action, "kind", None) == "FinishAction":
-                    message = getattr(action, "message", None)
-                    if message:
-                        return message
-
-            # Check for direct assistant message
-            if isinstance(event, MessageEvent):
-                msg = event.llm_message
-                if msg.role == "assistant" and msg.content:
-                    texts = [c.text for c in msg.content if hasattr(c, "text")]
-                    if texts:
-                        return "\n".join(texts)
-
+            if msg := self._extract_finish_action_message(event):
+                return msg
+            if msg := self._extract_assistant_message(event):
+                return msg
         return "No response generated"
