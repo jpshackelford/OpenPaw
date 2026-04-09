@@ -305,7 +305,9 @@ class TestCampfireSetupHelpers:
         """Test parsing a valid Campfire curl command."""
         from openpaws.channels.campfire_setup import parse_campfire_curl
 
-        curl_cmd = "curl -d 'Hello!' http://campfire.localhost/rooms/1/2-rk2SGfi9lZW0/messages"
+        curl_cmd = (
+            "curl -d 'Hello!' http://campfire.localhost/rooms/1/2-rk2SGfi9lZW0/messages"
+        )
         result = parse_campfire_curl(curl_cmd)
 
         assert result is not None
@@ -318,7 +320,9 @@ class TestCampfireSetupHelpers:
         """Test parsing curl command with https."""
         from openpaws.channels.campfire_setup import parse_campfire_curl
 
-        curl_cmd = "curl -d 'test' https://chat.example.com/rooms/42/abc-xyz123/messages"
+        curl_cmd = (
+            "curl -d 'test' https://chat.example.com/rooms/42/abc-xyz123/messages"
+        )
         result = parse_campfire_curl(curl_cmd)
 
         assert result is not None
@@ -402,9 +406,7 @@ class TestCampfireSetupHelpers:
         """Test building a Campfire test request."""
         from openpaws.channels.campfire_setup import build_test_request
 
-        req = build_test_request(
-            "http://campfire.localhost", "1", "2-abc123"
-        )
+        req = build_test_request("http://campfire.localhost", "1", "2-abc123")
 
         assert req.full_url == "http://campfire.localhost/rooms/1/2-abc123/messages"
         assert req.data == "🐾 OpenPaws connected successfully!".encode()

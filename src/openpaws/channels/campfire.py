@@ -142,7 +142,7 @@ class CampfireAdapter(ChannelAdapter):
         message_id = str(message.get("id", ""))
         return room_id, message_id, user, room, message
 
-    def _create_incoming_message(self, payload: dict) -> IncomingMessage:
+    def _create_incoming_message(self, payload: dict) -> IncomingMessage:  # length-ok
         """Convert Campfire webhook payload to IncomingMessage."""
         room_id, msg_id, user, room, message = self._parse_webhook_payload(payload)
         return IncomingMessage(

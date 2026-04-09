@@ -134,11 +134,10 @@ class TestMockTerminalInput:
 
         assert len(terminal.calls) == 2
         assert terminal.calls[0] == (
-            "confirm", {"prompt": "Question?", "default": True}
+            "confirm",
+            {"prompt": "Question?", "default": True},
         )
-        assert terminal.calls[1] == (
-            "prompt", {"text": "Input:", "default": "default"}
-        )
+        assert terminal.calls[1] == ("prompt", {"text": "Input:", "default": "default"})
 
     def test_exhausted_raises_error(self):
         terminal = MockTerminalInput(["only one"])
@@ -199,13 +198,15 @@ class TestMockTerminalInputIntegration:
 
     def test_wizard_flow_simulation(self):
         """Simulate a typical wizard flow."""
-        terminal = MockTerminalInput([
-            "y",                    # First confirm
-            "http://example.com",   # URL prompt
-            "n",                    # Second confirm (don't open browser)
-            "bot-key-123",          # Bot key prompt
-            "1",                    # Room ID prompt
-        ])
+        terminal = MockTerminalInput(
+            [
+                "y",  # First confirm
+                "http://example.com",  # URL prompt
+                "n",  # Second confirm (don't open browser)
+                "bot-key-123",  # Bot key prompt
+                "1",  # Room ID prompt
+            ]
+        )
 
         # Simulate wizard steps
         assert terminal.confirm("Check status?") is True

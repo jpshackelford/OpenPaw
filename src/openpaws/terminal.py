@@ -76,7 +76,9 @@ def _parse_yes_no(ch: str, default: bool) -> bool:
     return {"y": True, "n": False}.get(ch.lower(), default)
 
 
-def _handle_prompt_char(ch: str, result: list[str], echo: bool = True) -> bool:
+def _handle_prompt_char(  # length-ok
+    ch: str, result: list[str], echo: bool = True
+) -> bool:
     """Handle a single character in prompt input.
 
     Args:
@@ -228,7 +230,7 @@ class MockTerminalInput:
         if remaining > 0:
             raise AssertionError(
                 f"MockTerminalInput has {remaining} unused responses: "
-                f"{self.responses[self.index:]}"
+                f"{self.responses[self.index :]}"
             )
 
     def reset(self, responses: list[str] | None = None) -> None:

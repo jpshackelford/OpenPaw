@@ -150,9 +150,7 @@ class TestTestBotKey:
         import urllib.error
 
         with patch("urllib.request.urlopen") as mock_urlopen:
-            error = urllib.error.HTTPError(
-                "http://test.com", 302, "Redirect", {}, None
-            )
+            error = urllib.error.HTTPError("http://test.com", 302, "Redirect", {}, None)
             mock_urlopen.side_effect = error
 
             success, msg = check_bot_key("http://test.com", "1", "key")
@@ -224,15 +222,19 @@ class TestCampfireSetupWizard:
             terminal=terminal, output=lambda x="": output_lines.append(x)
         )
 
-        with patch(
-            "openpaws.channels.campfire_setup.check_campfire_reachable",
-            return_value=True,
-        ), patch(
-            "openpaws.channels.campfire_setup.check_campfire_setup_complete",
-            return_value=True,
-        ), patch(
-            "openpaws.channels.campfire_setup.check_bot_key",
-            return_value=(True, "success"),
+        with (
+            patch(
+                "openpaws.channels.campfire_setup.check_campfire_reachable",
+                return_value=True,
+            ),
+            patch(
+                "openpaws.channels.campfire_setup.check_campfire_setup_complete",
+                return_value=True,
+            ),
+            patch(
+                "openpaws.channels.campfire_setup.check_bot_key",
+                return_value=(True, "success"),
+            ),
         ):
             config = wizard.run(
                 url="http://campfire.localhost",
@@ -259,28 +261,35 @@ class TestCampfireSetupWizard:
         # 1. URL prompt (no url arg)
         # 2. Bot key prompt (no existing config)
         # 3. Room ID prompt (no room found)
-        terminal = MockTerminalInput([
-            "http://mycamp.local",  # URL prompt
-            "key-456",  # Bot key prompt
-            "2",  # Room ID prompt
-        ])
+        terminal = MockTerminalInput(
+            [
+                "http://mycamp.local",  # URL prompt
+                "key-456",  # Bot key prompt
+                "2",  # Room ID prompt
+            ]
+        )
         output_lines = []
 
         wizard = CampfireSetupWizard(
             terminal=terminal, output=lambda x="": output_lines.append(x)
         )
 
-        with patch(
-            "openpaws.channels.campfire_setup.check_campfire_reachable",
-            return_value=True,
-        ), patch(
-            "openpaws.channels.campfire_setup.check_campfire_setup_complete",
-            return_value=True,
-        ), patch(
-            "openpaws.channels.campfire_setup.check_bot_key",
-            return_value=(True, "success"),
-        ), patch(
-            "openpaws.channels.campfire_setup.find_valid_room", return_value=None
+        with (
+            patch(
+                "openpaws.channels.campfire_setup.check_campfire_reachable",
+                return_value=True,
+            ),
+            patch(
+                "openpaws.channels.campfire_setup.check_campfire_setup_complete",
+                return_value=True,
+            ),
+            patch(
+                "openpaws.channels.campfire_setup.check_bot_key",
+                return_value=(True, "success"),
+            ),
+            patch(
+                "openpaws.channels.campfire_setup.find_valid_room", return_value=None
+            ),
         ):
             config = wizard.run(no_browser=True)
 
@@ -294,30 +303,33 @@ class TestCampfireSetupWizard:
 
         # Pre-create config with bot key
         config_file = tmp_path / "config.yaml"
-        config_file.write_text(
-            "channels:\n  campfire:\n    bot_key: existing-key\n"
-        )
+        config_file.write_text("channels:\n  campfire:\n    bot_key: existing-key\n")
 
-        terminal = MockTerminalInput([
-            "y",  # Use existing bot key
-        ])
+        terminal = MockTerminalInput(
+            [
+                "y",  # Use existing bot key
+            ]
+        )
         output_lines = []
 
         wizard = CampfireSetupWizard(
             terminal=terminal, output=lambda x="": output_lines.append(x)
         )
 
-        with patch(
-            "openpaws.channels.campfire_setup.check_campfire_reachable",
-            return_value=True,
-        ), patch(
-            "openpaws.channels.campfire_setup.check_campfire_setup_complete",
-            return_value=True,
-        ), patch(
-            "openpaws.channels.campfire_setup.check_bot_key",
-            return_value=(True, "success"),
-        ), patch(
-            "openpaws.channels.campfire_setup.find_valid_room", return_value="1"
+        with (
+            patch(
+                "openpaws.channels.campfire_setup.check_campfire_reachable",
+                return_value=True,
+            ),
+            patch(
+                "openpaws.channels.campfire_setup.check_campfire_setup_complete",
+                return_value=True,
+            ),
+            patch(
+                "openpaws.channels.campfire_setup.check_bot_key",
+                return_value=(True, "success"),
+            ),
+            patch("openpaws.channels.campfire_setup.find_valid_room", return_value="1"),
         ):
             config = wizard.run(
                 url="http://test.com",
@@ -336,26 +348,32 @@ class TestCampfireSetupWizard:
         # 2. Bot key prompt (no existing config)
         # 3. Room ID prompt (no room found)
         # 4. "Continue after failed connection?" - yes
-        terminal = MockTerminalInput([
-            "y",  # Continue anyway (unreachable)
-            "bot-key",  # Bot key prompt
-            "1",  # Room ID prompt
-            "y",  # Continue after failed connection
-        ])
+        terminal = MockTerminalInput(
+            [
+                "y",  # Continue anyway (unreachable)
+                "bot-key",  # Bot key prompt
+                "1",  # Room ID prompt
+                "y",  # Continue after failed connection
+            ]
+        )
         output_lines = []
 
         wizard = CampfireSetupWizard(
             terminal=terminal, output=lambda x="": output_lines.append(x)
         )
 
-        with patch(
-            "openpaws.channels.campfire_setup.check_campfire_reachable",
-            return_value=False,
-        ), patch(
-            "openpaws.channels.campfire_setup.check_bot_key",
-            return_value=(False, "connection_error"),
-        ), patch(
-            "openpaws.channels.campfire_setup.find_valid_room", return_value=None
+        with (
+            patch(
+                "openpaws.channels.campfire_setup.check_campfire_reachable",
+                return_value=False,
+            ),
+            patch(
+                "openpaws.channels.campfire_setup.check_bot_key",
+                return_value=(False, "connection_error"),
+            ),
+            patch(
+                "openpaws.channels.campfire_setup.find_valid_room", return_value=None
+            ),
         ):
             config = wizard.run(
                 url="http://test.com",
@@ -385,16 +403,19 @@ class TestCampfireSetupWizard:
                 return False, "invalid_room"
             return True, "success"
 
-        with patch(
-            "openpaws.channels.campfire_setup.check_campfire_reachable",
-            return_value=True,
-        ), patch(
-            "openpaws.channels.campfire_setup.check_campfire_setup_complete",
-            return_value=True,
-        ), patch(
-            "openpaws.channels.campfire_setup.check_bot_key", side_effect=mock_test
-        ), patch(
-            "openpaws.channels.campfire_setup.find_valid_room", return_value="3"
+        with (
+            patch(
+                "openpaws.channels.campfire_setup.check_campfire_reachable",
+                return_value=True,
+            ),
+            patch(
+                "openpaws.channels.campfire_setup.check_campfire_setup_complete",
+                return_value=True,
+            ),
+            patch(
+                "openpaws.channels.campfire_setup.check_bot_key", side_effect=mock_test
+            ),
+            patch("openpaws.channels.campfire_setup.find_valid_room", return_value="3"),
         ):
             config = wizard.run(
                 url="http://test.com",
@@ -417,24 +438,30 @@ class TestWizardWithCurlParsing:
         curl_cmd = "curl -d 'Hi' http://camp.local/rooms/5/key-xyz/messages"
         # With no_browser=True and setup complete, wizard needs:
         # 1. Bot key prompt (curl command works here)
-        terminal = MockTerminalInput([
-            curl_cmd,  # Paste curl command as bot key
-        ])
+        terminal = MockTerminalInput(
+            [
+                curl_cmd,  # Paste curl command as bot key
+            ]
+        )
         output_lines = []
 
         wizard = CampfireSetupWizard(
             terminal=terminal, output=lambda x="": output_lines.append(x)
         )
 
-        with patch(
-            "openpaws.channels.campfire_setup.check_campfire_reachable",
-            return_value=True,
-        ), patch(
-            "openpaws.channels.campfire_setup.check_campfire_setup_complete",
-            return_value=True,
-        ), patch(
-            "openpaws.channels.campfire_setup.check_bot_key",
-            return_value=(True, "success"),
+        with (
+            patch(
+                "openpaws.channels.campfire_setup.check_campfire_reachable",
+                return_value=True,
+            ),
+            patch(
+                "openpaws.channels.campfire_setup.check_campfire_setup_complete",
+                return_value=True,
+            ),
+            patch(
+                "openpaws.channels.campfire_setup.check_bot_key",
+                return_value=(True, "success"),
+            ),
         ):
             config = wizard.run(
                 url="http://camp.local",
@@ -459,15 +486,19 @@ class TestWizardOutput:
             terminal=terminal, output=lambda x="": output_lines.append(x)
         )
 
-        with patch(
-            "openpaws.channels.campfire_setup.check_campfire_reachable",
-            return_value=True,
-        ), patch(
-            "openpaws.channels.campfire_setup.check_campfire_setup_complete",
-            return_value=True,
-        ), patch(
-            "openpaws.channels.campfire_setup.check_bot_key",
-            return_value=(True, "success"),
+        with (
+            patch(
+                "openpaws.channels.campfire_setup.check_campfire_reachable",
+                return_value=True,
+            ),
+            patch(
+                "openpaws.channels.campfire_setup.check_campfire_setup_complete",
+                return_value=True,
+            ),
+            patch(
+                "openpaws.channels.campfire_setup.check_bot_key",
+                return_value=(True, "success"),
+            ),
         ):
             wizard.run(
                 url="http://test.com",
@@ -491,15 +522,19 @@ class TestWizardOutput:
             terminal=terminal, output=lambda x="": output_lines.append(x)
         )
 
-        with patch(
-            "openpaws.channels.campfire_setup.check_campfire_reachable",
-            return_value=True,
-        ), patch(
-            "openpaws.channels.campfire_setup.check_campfire_setup_complete",
-            return_value=True,
-        ), patch(
-            "openpaws.channels.campfire_setup.check_bot_key",
-            return_value=(True, "success"),
+        with (
+            patch(
+                "openpaws.channels.campfire_setup.check_campfire_reachable",
+                return_value=True,
+            ),
+            patch(
+                "openpaws.channels.campfire_setup.check_campfire_setup_complete",
+                return_value=True,
+            ),
+            patch(
+                "openpaws.channels.campfire_setup.check_bot_key",
+                return_value=(True, "success"),
+            ),
         ):
             wizard.run(
                 url="http://test.com",
