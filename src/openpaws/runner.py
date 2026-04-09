@@ -272,10 +272,9 @@ class ConversationRunner:
     ) -> ConversationResult:
         """Execute the prompt with callback registration and cleanup."""
         events: list[Event] = []
-        all_callbacks = self._build_callbacks(events, callbacks)
         conv = None
         try:
-            conv = self._create_conversation(group, conversation_id, all_callbacks)
+            conv = self._create_conversation(group, conversation_id, self._build_callbacks(events, callbacks))
             if send_callback:
                 register_send_callback(str(conv.state.id), send_callback)
             return self._run_conversation(conv, prompt, events)

@@ -142,19 +142,14 @@ class CampfireAdapter(ChannelAdapter):
 
     def _create_incoming_message(self, payload: dict) -> IncomingMessage:
         """Convert Campfire webhook payload to IncomingMessage."""
-        room_id, message_id, user, room, message = self._parse_webhook_payload(payload)
+        room_id, msg_id, user, room, message = self._parse_webhook_payload(payload)
         return IncomingMessage(
-            channel_type=self.channel_type,
-            channel_id=room_id,
-            user_id=str(user.get("id", "")),
-            user_name=user.get("name", ""),
-            text=message.get("body", {}).get("plain", ""),
-            thread_id=message_id,
-            is_mention=True,
-            is_dm=False,
+            channel_type=self.channel_type, channel_id=room_id, thread_id=msg_id,
+            user_id=str(user.get("id", "")), user_name=user.get("name", ""),
+            text=message.get("body", {}).get("plain", ""), is_mention=True, is_dm=False,
             raw_event={"user": user, "room": room, "message": message},
-            on_processing_start=self._make_processing_callback(room_id, message_id),
-            send_status=self._make_status_callback(room_id, message_id),
+            on_processing_start=self._make_processing_callback(room_id, msg_id),
+            send_status=self._make_status_callback(room_id, msg_id),
         )
 
     async def _handle_webhook(self, request: web.Request) -> web.Response:

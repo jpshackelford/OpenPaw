@@ -599,21 +599,20 @@ def _campfire_http_error_to_result(e) -> tuple[bool, str]:
     return False, f"http_{e.code}"
 
 
-def _test_campfire_bot_key(
-    base_url: str, room_id: str, bot_key: str
-) -> tuple[bool, str]:
+def _build_campfire_request(base_url: str, room_id: str, bot_key: str):
+    """Build HTTP request for testing Campfire connection."""
+    import urllib.request
+    url = f"{base_url}/rooms/{room_id}/{bot_key}/messages"
+    data = "🐾 OpenPaws connected successfully!".encode()
+    return urllib.request.Request(url, data=data, headers={"Content-Type": "text/plain; charset=utf-8"})
+
+
+def _test_campfire_bot_key(base_url: str, room_id: str, bot_key: str) -> tuple[bool, str]:
     """Test if a bot key is valid and room exists."""
     import urllib.error
     import urllib.request
-
-    url = f"{base_url}/rooms/{room_id}/{bot_key}/messages"
-    data = "🐾 OpenPaws connected successfully!".encode()
-    req = urllib.request.Request(
-        url, data=data, headers={"Content-Type": "text/plain; charset=utf-8"}
-    )
-
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(_build_campfire_request(base_url, room_id, bot_key), timeout=10) as resp:
             return (True, "success") if resp.status == 201 else (False, "error")
     except urllib.error.HTTPError as e:
         return _campfire_http_error_to_result(e)
