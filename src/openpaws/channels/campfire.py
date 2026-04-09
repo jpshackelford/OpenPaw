@@ -451,6 +451,7 @@ def create_campfire_adapter(
     bot_key: str,
     webhook_port: int = 8765,
     webhook_path: str = "/webhook",
+    webhook_host: str = DEFAULT_WEBHOOK_HOST,
     context_messages: int = DEFAULT_CONTEXT_MESSAGES,
 ) -> CampfireAdapter:
     """Create a Campfire adapter with the given configuration.
@@ -460,6 +461,7 @@ def create_campfire_adapter(
         bot_key: Bot authentication key
         webhook_port: Local port for webhook server
         webhook_path: URL path for webhook endpoint
+        webhook_host: Host to bind webhook server to (default: 127.0.0.1)
         context_messages: Number of recent messages to fetch for context (0 to disable)
 
     Returns:
@@ -470,6 +472,7 @@ def create_campfire_adapter(
         bot_key=bot_key,
         webhook_port=webhook_port,
         webhook_path=webhook_path,
+        webhook_host=webhook_host,
         context_messages=context_messages,
     )
     return CampfireAdapter(config)
