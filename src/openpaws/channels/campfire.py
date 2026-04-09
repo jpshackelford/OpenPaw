@@ -111,30 +111,35 @@ class CampfireAdapter(ChannelAdapter):
             return match.group(1)
         return ""
 
+    def _make_processing_callback(self, room_id: str, message_id: str):
+        """Create callback for adding reaction when processing starts."""
+
+        async def on_processing_start() -> None:
+            await self.add_reaction(room_id, message_id, "👀")
+
+        return on_processing_start
+
+    def _make_status_callback(self, room_id: str, message_id: str):
+        """Create callback for sending interim status messages."""
+
+        async def send_status(text: str) -> None:
+            outgoing = OutgoingMessage(
+                channel_id=room_id, text=text, thread_id=message_id
+            )
+            await self.send_message(outgoing)
+
+        return send_status
+
     def _create_incoming_message(self, payload: dict) -> IncomingMessage:
         """Convert Campfire webhook payload to IncomingMessage."""
         user = payload.get("user", {})
         room = payload.get("room", {})
         message = payload.get("message", {})
         body = message.get("body", {})
-
         room_path = room.get("path", "")
+
         room_id = self._extract_room_id(room_path) or str(room.get("id", ""))
         message_id = str(message.get("id", ""))
-
-        # Create callbacks for status updates
-        async def on_processing_start() -> None:
-            """Add 👀 reaction when handler starts processing."""
-            await self.add_reaction(room_id, message_id, "👀")
-
-        async def send_status(text: str) -> None:
-            """Send an interim status message."""
-            outgoing = OutgoingMessage(
-                channel_id=room_id,
-                text=text,
-                thread_id=message_id,
-            )
-            await self.send_message(outgoing)
 
         return IncomingMessage(
             channel_type=self.channel_type,
@@ -145,14 +150,9 @@ class CampfireAdapter(ChannelAdapter):
             thread_id=message_id,
             is_mention=True,
             is_dm=False,
-            raw_event={
-                "user": user,
-                "room": room,
-                "message": message,
-                "room_path": room_path,
-            },
-            on_processing_start=on_processing_start,
-            send_status=send_status,
+            raw_event={"user": user, "room": room, "message": message},
+            on_processing_start=self._make_processing_callback(room_id, message_id),
+            send_status=self._make_status_callback(room_id, message_id),
         )
 
     async def _handle_webhook(self, request: web.Request) -> web.Response:
@@ -302,55 +302,45 @@ class CampfireAdapter(ChannelAdapter):
         base = self._config.base_url.rstrip("/")
         return f"{base}/rooms/{room_id}/{self._config.bot_key}/messages"
 
-    async def fetch_room_context(
-        self, room_id: str, before_message_id: str | None = None
-    ) -> list[dict]:
-        """Fetch recent messages from a room for conversation context.
-
-        Uses the bot read API (requires PR #190 or jpshackelford/once-campfire fork).
-
-        Args:
-            room_id: The room to fetch messages from
-            before_message_id: Fetch messages before this ID (for pagination)
-
-        Returns:
-            List of message dicts with keys: id, body (plain/html), created_at, creator
-        """
-        if not self._http_session:
-            raise RuntimeError("Campfire adapter not started")
-
-        if self._config.context_messages <= 0:
-            return []
-
-        url = self._build_read_messages_url(room_id)
-        params = {}
-        if before_message_id:
-            params["before"] = before_message_id
-
+    async def _fetch_messages_from_api(
+        self, url: str, params: dict
+    ) -> list[dict] | None:
+        """Fetch messages from the API and return them or None on error."""
         try:
             async with self._http_session.get(url, params=params) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    messages = data.get("messages", [])
-                    # API returns newest-first; take the last N (most recent before
-                    # the target message) and reverse to chronological order
-                    limited = messages[-self._config.context_messages :]
-                    return list(reversed(limited))
-                elif resp.status == 404:
+                    return data.get("messages", [])
+                if resp.status == 404:
                     logger.warning(
                         "Bot read API not available (404). "
                         "Ensure you're using a Campfire image with PR #190."
                     )
-                    return []
                 else:
                     body = await resp.text()
-                    logger.error(
-                        f"Failed to fetch room context: {resp.status} - {body}"
-                    )
-                    return []
+                    logger.error(f"Failed to fetch room context: {resp.status} - {body}")
         except Exception as e:
             logger.warning(f"Could not fetch room context: {e}")
+        return None
+
+    async def fetch_room_context(
+        self, room_id: str, before_message_id: str | None = None
+    ) -> list[dict]:
+        """Fetch recent messages from a room for conversation context."""
+        if not self._http_session:
+            raise RuntimeError("Campfire adapter not started")
+        if self._config.context_messages <= 0:
             return []
+
+        url = self._build_read_messages_url(room_id)
+        params = {"before": before_message_id} if before_message_id else {}
+
+        messages = await self._fetch_messages_from_api(url, params)
+        if messages is None:
+            return []
+        # API returns newest-first; take last N and reverse to chronological order
+        limited = messages[-self._config.context_messages :]
+        return list(reversed(limited))
 
     def _format_context_for_prompt(
         self, messages: list[dict], current_user: str

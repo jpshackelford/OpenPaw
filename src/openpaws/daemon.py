@@ -408,6 +408,38 @@ class Daemon:
                 return name
         return None
 
+    async def _signal_processing_start(self, message: IncomingMessage) -> None:
+        """Signal that we're starting to process (e.g., add 👀 reaction)."""
+        if not message.on_processing_start:
+            logger.debug("No on_processing_start callback set")
+            return
+        logger.debug("Calling on_processing_start callback")
+        try:
+            await message.on_processing_start()
+            logger.debug("on_processing_start callback completed")
+        except Exception as e:
+            logger.warning(f"Failed to signal processing start: {e}")
+
+    async def _run_message_conversation(
+        self, group_name: str, message: IncomingMessage
+    ) -> str | None:
+        """Run the conversation and return the response."""
+        try:
+            result = await self._runner.run_message(
+                group_name=group_name,
+                message=message.text,
+                sender=message.user_name,
+                send_callback=message.send_status,
+            )
+            if result.success:
+                logger.info(f"Response generated for {group_name}")
+                return result.message
+            logger.error(f"Conversation failed: {result.error}")
+            return f"Sorry, I encountered an error: {result.error}"
+        except Exception as e:
+            logger.exception(f"Error handling message: {e}")
+            return f"Sorry, something went wrong: {e}"
+
     async def _handle_message(self, message: IncomingMessage) -> str | None:
         """Handle incoming messages from channel adapters."""
         logger.info(
@@ -419,7 +451,6 @@ class Daemon:
             logger.error("Conversation runner not initialized")
             return "Error: Bot not fully initialized"
 
-        # Find the group for this message
         group_name = self._find_group_for_message(message)
         if not group_name:
             logger.warning(
@@ -427,35 +458,8 @@ class Daemon:
             )
             return None
 
-        # Signal that we're starting to process (e.g., add 👀 reaction)
-        if message.on_processing_start:
-            logger.debug("Calling on_processing_start callback")
-            try:
-                await message.on_processing_start()
-                logger.debug("on_processing_start callback completed")
-            except Exception as e:
-                logger.warning(f"Failed to signal processing start: {e}")
-        else:
-            logger.debug("No on_processing_start callback set")
-
-        # Run the conversation, passing the send_status callback so the agent
-        # can send interim messages if needed
-        try:
-            result = await self._runner.run_message(
-                group_name=group_name,
-                message=message.text,
-                sender=message.user_name,
-                send_callback=message.send_status,
-            )
-            if result.success:
-                logger.info(f"Response generated for {group_name}")
-                return result.message
-            else:
-                logger.error(f"Conversation failed: {result.error}")
-                return f"Sorry, I encountered an error: {result.error}"
-        except Exception as e:
-            logger.exception(f"Error handling message: {e}")
-            return f"Sorry, something went wrong: {e}"
+        await self._signal_processing_start(message)
+        return await self._run_message_conversation(group_name, message)
 
     def _create_slack_adapter(self, channel_config) -> SlackAdapter | None:
         """Create a Slack adapter from channel config."""
