@@ -123,7 +123,7 @@ def _run_async_callback(callback, message: str) -> None:
 class SendStatusExecutor(ToolExecutor):
     """Executor that sends status messages via callback looked up from registry."""
 
-    def _get_callback(self, conversation) -> callable | None:
+    def _get_callback(self, conversation) -> Callable | None:
         """Look up the callback from the registry using conversation ID."""
         if conversation and hasattr(conversation, "state"):
             return get_send_callback(str(conversation.state.id))
@@ -151,37 +151,26 @@ class SendStatusTool(ToolDefinition[SendStatusAction, SendStatusObservation]):
     """Tool for sending interim status messages to the user."""
 
     @classmethod
+    def _make_annotations(cls) -> ToolAnnotations:
+        """Create tool annotations for the send_status tool."""
+        return ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=False,
+            openWorldHint=True,
+        )
+
+    @classmethod
     def create(
-        cls,
-        conv_state: "ConversationState | None" = None,  # noqa: ARG003
-        **params,
+        cls, conv_state: "ConversationState | None" = None, **params  # noqa: ARG003
     ) -> Sequence[Self]:
-        """Create SendStatusTool instance.
-
-        Args:
-            conv_state: Optional conversation state (not used directly, but the
-                executor will look up callbacks by conversation ID at runtime).
-            **params: Additional parameters (none supported).
-
-        Returns:
-            A sequence containing a single SendStatusTool instance.
-        """
+        """Create SendStatusTool instance."""
         if params:
-            raise ValueError(
-                f"SendStatusTool doesn't accept these parameters: {list(params.keys())}"
-            )
-
-        return [
-            cls(
-                description=SEND_STATUS_DESCRIPTION,
-                action_type=SendStatusAction,
-                observation_type=SendStatusObservation,
-                executor=SendStatusExecutor(),
-                annotations=ToolAnnotations(
-                    readOnlyHint=False,  # It does send messages
-                    destructiveHint=False,  # Not destructive
-                    idempotentHint=False,  # Sending twice sends two messages
-                    openWorldHint=True,  # Interacts with external channel
-                ),
-            )
-        ]
+            raise ValueError(f"SendStatusTool doesn't accept: {list(params.keys())}")
+        return [cls(
+            description=SEND_STATUS_DESCRIPTION,
+            action_type=SendStatusAction,
+            observation_type=SendStatusObservation,
+            executor=SendStatusExecutor(),
+            annotations=cls._make_annotations(),
+        )]

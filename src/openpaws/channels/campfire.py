@@ -213,27 +213,30 @@ class CampfireAdapter(ChannelAdapter):
         except Exception:
             logger.exception("Failed to send error message to Campfire")
 
+    async def _enrich_with_context(self, incoming: IncomingMessage) -> IncomingMessage:
+        """Fetch and prepend conversation context to the message."""
+        context = await self.fetch_room_context(
+            incoming.channel_id, before_message_id=incoming.thread_id
+        )
+        if context:
+            text = self._format_context_for_prompt(context, incoming.user_name)
+            return self._add_context_to_message(incoming, text)
+        return incoming
+
+    async def _send_response(self, incoming: IncomingMessage, response: str) -> None:
+        """Send a response message back to the channel."""
+        outgoing = OutgoingMessage(
+            channel_id=incoming.channel_id, text=response, thread_id=incoming.thread_id
+        )
+        await self.send_message(outgoing)
+
     async def _process_message_async(self, incoming: IncomingMessage) -> None:
         """Process message asynchronously and send response back to Campfire."""
         try:
-            context_messages = await self.fetch_room_context(
-                incoming.channel_id, before_message_id=incoming.thread_id
-            )
-
-            if context_messages:
-                context_text = self._format_context_for_prompt(
-                    context_messages, incoming.user_name
-                )
-                incoming = self._add_context_to_message(incoming, context_text)
-
+            incoming = await self._enrich_with_context(incoming)
             response = await self._message_handler(incoming)
             if response:
-                outgoing = OutgoingMessage(
-                    channel_id=incoming.channel_id,
-                    text=response,
-                    thread_id=incoming.thread_id,
-                )
-                await self.send_message(outgoing)
+                await self._send_response(incoming, response)
         except Exception as e:
             logger.exception(f"Error processing message: {e}")
             await self._send_error_response(incoming.channel_id, e)
