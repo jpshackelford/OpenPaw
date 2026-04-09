@@ -525,6 +525,59 @@ class TestCampfireAdapterLifecycle:
         await adapter.stop()
         assert adapter.is_running() is False
 
+    @pytest.mark.asyncio
+    async def test_spawn_background_task_tracks_task(self, config):
+        """Test that _spawn_background_task adds task to tracking set."""
+        import asyncio
+
+        adapter = CampfireAdapter(config)
+
+        async def dummy_coro():
+            await asyncio.sleep(0.01)
+
+        adapter._spawn_background_task(dummy_coro())
+        assert len(adapter._background_tasks) == 1
+
+        # Wait for task to complete
+        await asyncio.sleep(0.02)
+        # Task should be removed after completion
+        assert len(adapter._background_tasks) == 0
+
+    @pytest.mark.asyncio
+    async def test_cancel_background_tasks_cancels_running(self, config):
+        """Test that _cancel_background_tasks cancels all running tasks."""
+        import asyncio
+
+        adapter = CampfireAdapter(config)
+
+        async def long_running():
+            await asyncio.sleep(10)
+
+        adapter._spawn_background_task(long_running())
+        adapter._spawn_background_task(long_running())
+        assert len(adapter._background_tasks) == 2
+
+        await adapter._cancel_background_tasks()
+        assert len(adapter._background_tasks) == 0
+
+    @pytest.mark.asyncio
+    async def test_stop_cancels_background_tasks(self, config):
+        """Test that stop() cancels background tasks before cleanup."""
+        import asyncio
+
+        adapter = CampfireAdapter(config)
+        adapter._running = True
+
+        async def long_running():
+            await asyncio.sleep(10)
+
+        adapter._spawn_background_task(long_running())
+        assert len(adapter._background_tasks) == 1
+
+        await adapter.stop()
+        assert len(adapter._background_tasks) == 0
+        assert adapter.is_running() is False
+
 
 class TestCampfireAdapterSendMessage:
     """Tests for Campfire adapter send_message."""

@@ -456,3 +456,126 @@ class TestRealTerminalInput:
 
         # Settings should still be restored via finally block
         mock_termios.tcsetattr.assert_called_once()
+
+
+class TestRealTerminalInputTTYFallback:
+    """Tests for RealTerminalInput TTY fallback behavior."""
+
+    def test_is_tty_returns_false_for_non_tty(self, monkeypatch):
+        """Test _is_tty returns False when stdin is not a TTY."""
+        from unittest.mock import MagicMock
+
+        mock_stdin = MagicMock()
+        mock_stdin.isatty.return_value = False
+        monkeypatch.setattr(sys, "stdin", mock_stdin)
+
+        terminal = RealTerminalInput()
+        assert terminal._is_tty() is False
+
+    def test_is_tty_returns_true_for_tty(self, monkeypatch):
+        """Test _is_tty returns True when stdin is a TTY."""
+        from unittest.mock import MagicMock
+
+        mock_stdin = MagicMock()
+        mock_stdin.isatty.return_value = True
+        monkeypatch.setattr(sys, "stdin", mock_stdin)
+
+        terminal = RealTerminalInput()
+        assert terminal._is_tty() is True
+
+    def test_read_char_fallback_returns_first_char(self, monkeypatch):
+        """Test _read_char_fallback returns first char of input."""
+        monkeypatch.setattr("builtins.input", lambda: "hello")
+
+        terminal = RealTerminalInput()
+        assert terminal._read_char_fallback() == "h"
+
+    def test_read_char_fallback_empty_returns_newline(self, monkeypatch):
+        """Test _read_char_fallback returns newline for empty input."""
+        monkeypatch.setattr("builtins.input", lambda: "")
+
+        terminal = RealTerminalInput()
+        assert terminal._read_char_fallback() == "\n"
+
+    def test_read_char_fallback_eof_returns_newline(self, monkeypatch):
+        """Test _read_char_fallback returns newline on EOF."""
+
+        def raise_eof():
+            raise EOFError()
+
+        monkeypatch.setattr("builtins.input", raise_eof)
+
+        terminal = RealTerminalInput()
+        assert terminal._read_char_fallback() == "\n"
+
+    def test_read_line_fallback_returns_input(self, monkeypatch):
+        """Test _read_line_fallback returns full line."""
+        monkeypatch.setattr("builtins.input", lambda: "test line")
+
+        terminal = RealTerminalInput()
+        assert terminal._read_line_fallback() == "test line"
+
+    def test_read_line_fallback_eof_returns_empty(self, monkeypatch):
+        """Test _read_line_fallback returns empty string on EOF."""
+
+        def raise_eof():
+            raise EOFError()
+
+        monkeypatch.setattr("builtins.input", raise_eof)
+
+        terminal = RealTerminalInput()
+        assert terminal._read_line_fallback() == ""
+
+    def test_read_char_uses_fallback_when_not_tty(self, monkeypatch):
+        """Test read_char uses fallback when stdin is not a TTY."""
+        from unittest.mock import MagicMock
+
+        mock_stdin = MagicMock()
+        mock_stdin.isatty.return_value = False
+        monkeypatch.setattr(sys, "stdin", mock_stdin)
+        monkeypatch.setattr("builtins.input", lambda: "abc")
+
+        terminal = RealTerminalInput()
+        result = terminal.read_char()
+
+        assert result == "a"
+        # Should not try to use termios (no fileno call for terminal ops)
+
+    def test_read_line_uses_fallback_when_not_tty(self, monkeypatch):
+        """Test read_line uses fallback when stdin is not a TTY."""
+        from unittest.mock import MagicMock
+
+        mock_stdin = MagicMock()
+        mock_stdin.isatty.return_value = False
+        monkeypatch.setattr(sys, "stdin", mock_stdin)
+        monkeypatch.setattr("builtins.input", lambda: "test input")
+
+        terminal = RealTerminalInput()
+        result = terminal.read_line()
+
+        assert result == "test input"
+
+    def test_read_line_cbreak_is_called_for_tty(self, monkeypatch):
+        """Test _read_line_cbreak is used when stdin is a TTY."""
+        from unittest.mock import MagicMock
+
+        mock_termios = MagicMock()
+        mock_termios.tcgetattr.return_value = ["settings"]
+        mock_termios.TCSADRAIN = 1
+
+        mock_tty = MagicMock()
+
+        mock_stdin = MagicMock()
+        mock_stdin.isatty.return_value = True
+        mock_stdin.fileno.return_value = 0
+        mock_stdin.read.side_effect = ["t", "e", "s", "t", "\r"]
+
+        monkeypatch.setitem(sys.modules, "termios", mock_termios)
+        monkeypatch.setitem(sys.modules, "tty", mock_tty)
+        monkeypatch.setattr(sys, "stdin", mock_stdin)
+
+        terminal = RealTerminalInput()
+        result = terminal.read_line()
+
+        assert result == "test"
+        mock_tty.setcbreak.assert_called_once()
