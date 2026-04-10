@@ -447,7 +447,7 @@ class Storage:
                 return None
             return self._row_to_queue_item(row)
 
-    def list_queue(
+    def list_queue(  # length-ok: SQL query building requires steps
         self, status: str | None = None, limit: int | None = None
     ) -> list[QueueItem]:
         """List queue items, optionally filtered by status."""
