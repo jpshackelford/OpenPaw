@@ -89,6 +89,7 @@ branch = true
 parallel = true
 source = ["src/openpaws"]
 sigterm = true
+relative_files = true
 
 [tool.coverage.paths]
 source = [
