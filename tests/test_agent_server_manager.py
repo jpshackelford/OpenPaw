@@ -627,9 +627,7 @@ class TestStartServerProcess:
 
         manager = AgentServerManager(base_dir=tmp_path)
 
-        with patch(
-            "openpaws.agent_server_manager.subprocess.Popen"
-        ) as mock_cls:
+        with patch("openpaws.agent_server_manager.subprocess.Popen") as mock_cls:
             manager._start_server_process(18000)
 
         # Check that Popen was called with file handle for stdout

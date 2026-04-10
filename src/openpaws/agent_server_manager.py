@@ -199,8 +199,11 @@ class AgentServerManager:
         env["OPENHANDS_CONVERSATIONS_DIR"] = str(self.conversations_dir)
         log_handle = self._get_server_log_handle(port)
         return subprocess.Popen(
-            cmd, env=env, start_new_session=True,
-            stdout=log_handle, stderr=subprocess.STDOUT,
+            cmd,
+            env=env,
+            start_new_session=True,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
         )
 
     def _is_port_available(self, port: int) -> bool:
@@ -267,9 +270,7 @@ class AgentServerManager:
         if not self._is_process_running(server.pid):
             return False
         try:
-            resp = await self._http_client.get(
-                f"http://127.0.0.1:{server.port}/health"
-            )
+            resp = await self._http_client.get(f"http://127.0.0.1:{server.port}/health")
             return resp.status_code == 200
         except (httpx.ConnectError, httpx.TimeoutException):
             return False
