@@ -88,6 +88,22 @@ class QueueConfig:
 
 
 @dataclass
+class RemoteServerConfig:
+    """Configuration for remote agent server mode.
+
+    When enabled, conversations run in separate agent-server processes
+    that survive daemon restarts. This provides:
+    - Daemon-resilient conversations (no lost work on restart)
+    - Better isolation (agent crashes don't take down daemon)
+    - Graceful shutdown (conversations can finish before daemon exits)
+    """
+
+    enabled: bool = False  # Disabled by default for backward compatibility
+    port_start: int = 18000  # Start of port range for agent servers
+    port_end: int = 18100  # End of port range for agent servers
+
+
+@dataclass
 class Config:
     """Root configuration."""
 
@@ -96,6 +112,7 @@ class Config:
     tasks: dict[str, TaskConfig] = field(default_factory=dict)
     agent: AgentConfig = field(default_factory=AgentConfig)
     queue: QueueConfig = field(default_factory=QueueConfig)
+    remote_servers: RemoteServerConfig = field(default_factory=RemoteServerConfig)
 
 
 def expand_env_vars(value: str) -> str:
@@ -218,4 +235,5 @@ def load_config(path: Path | str | None = None) -> Config:
         tasks=_parse_tasks(raw),
         agent=AgentConfig(**raw.get("agent", {})),
         queue=QueueConfig(**raw.get("queue", {})),
+        remote_servers=RemoteServerConfig(**raw.get("remote_servers", {})),
     )

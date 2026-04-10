@@ -547,3 +547,112 @@ queue:
             assert config.queue.max_dispatch == 5
 
         os.unlink(f.name)
+
+
+class TestRemoteServerConfig:
+    """Tests for remote server configuration."""
+
+    def test_remote_server_config_defaults(self):
+        """Test default values for RemoteServerConfig."""
+        from openpaws.config import RemoteServerConfig
+
+        config = RemoteServerConfig()
+        assert config.enabled is False
+        assert config.port_start == 18000
+        assert config.port_end == 18100
+
+    def test_load_remote_server_config_defaults(self):
+        """Test that remote_servers uses defaults when not specified."""
+        config_content = """
+channels:
+  telegram:
+    bot_token: "test-token"
+
+groups:
+  main:
+    channel: telegram
+    chat_id: "123"
+
+tasks:
+  daily:
+    schedule: "0 9 * * *"
+    group: main
+    prompt: "Daily summary"
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(config_content)
+            f.flush()
+
+            config = load_config(f.name)
+            assert config.remote_servers.enabled is False
+            assert config.remote_servers.port_start == 18000
+            assert config.remote_servers.port_end == 18100
+
+        os.unlink(f.name)
+
+    def test_load_remote_server_config_enabled(self):
+        """Test loading remote_servers config when enabled."""
+        config_content = """
+channels:
+  telegram:
+    bot_token: "test-token"
+
+groups:
+  main:
+    channel: telegram
+    chat_id: "123"
+
+tasks:
+  daily:
+    schedule: "0 9 * * *"
+    group: main
+    prompt: "Daily summary"
+
+remote_servers:
+  enabled: true
+  port_start: 19000
+  port_end: 19100
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(config_content)
+            f.flush()
+
+            config = load_config(f.name)
+            assert config.remote_servers.enabled is True
+            assert config.remote_servers.port_start == 19000
+            assert config.remote_servers.port_end == 19100
+
+        os.unlink(f.name)
+
+    def test_load_remote_server_config_partial(self):
+        """Test loading remote_servers config with partial options."""
+        config_content = """
+channels:
+  telegram:
+    bot_token: "test-token"
+
+groups:
+  main:
+    channel: telegram
+    chat_id: "123"
+
+tasks:
+  daily:
+    schedule: "0 9 * * *"
+    group: main
+    prompt: "Daily summary"
+
+remote_servers:
+  enabled: true
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(config_content)
+            f.flush()
+
+            config = load_config(f.name)
+            assert config.remote_servers.enabled is True
+            # Defaults for unspecified
+            assert config.remote_servers.port_start == 18000
+            assert config.remote_servers.port_end == 18100
+
+        os.unlink(f.name)

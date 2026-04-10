@@ -490,3 +490,61 @@ class TestGroupNotFoundResult:
         assert result.success is False
         assert "missing-group" in result.message
         assert "missing-group" in result.error
+
+
+class TestRemoteServerMode:
+    """Tests for remote server mode in ConversationRunner."""
+
+    def test_use_remote_servers_disabled_by_default(self):
+        """Test that use_remote_servers is False by default."""
+        from openpaws.config import Config
+        from openpaws.runner import ConversationRunner
+
+        config = Config()
+        runner = ConversationRunner(config)
+        assert runner.use_remote_servers is False
+
+    def test_use_remote_servers_false_without_manager(self):
+        """Test use_remote_servers is False when config enabled but no manager."""
+        from openpaws.config import Config, RemoteServerConfig
+        from openpaws.runner import ConversationRunner
+
+        config = Config(remote_servers=RemoteServerConfig(enabled=True))
+        runner = ConversationRunner(config)
+        assert runner.use_remote_servers is False
+
+    def test_use_remote_servers_false_when_config_disabled(self):
+        """Test use_remote_servers is False when config disabled with manager."""
+        from unittest.mock import MagicMock
+
+        from openpaws.config import Config, RemoteServerConfig
+        from openpaws.runner import ConversationRunner
+
+        config = Config(remote_servers=RemoteServerConfig(enabled=False))
+        mock_manager = MagicMock()
+        runner = ConversationRunner(config, server_manager=mock_manager)
+        assert runner.use_remote_servers is False
+
+    def test_use_remote_servers_true_when_enabled_and_manager_present(self):
+        """Test use_remote_servers is True when enabled with manager."""
+        from unittest.mock import MagicMock
+
+        from openpaws.config import Config, RemoteServerConfig
+        from openpaws.runner import ConversationRunner
+
+        config = Config(remote_servers=RemoteServerConfig(enabled=True))
+        mock_manager = MagicMock()
+        runner = ConversationRunner(config, server_manager=mock_manager)
+        assert runner.use_remote_servers is True
+
+    def test_server_manager_stored_correctly(self):
+        """Test that server_manager is stored on the runner."""
+        from unittest.mock import MagicMock
+
+        from openpaws.config import Config
+        from openpaws.runner import ConversationRunner
+
+        config = Config()
+        mock_manager = MagicMock()
+        runner = ConversationRunner(config, server_manager=mock_manager)
+        assert runner._server_manager is mock_manager

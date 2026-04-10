@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from openpaws.agent_server_manager import AgentServerManager
 from openpaws.channels.base import ChannelAdapter, IncomingMessage, OutgoingMessage
 from openpaws.channels.campfire import CampfireAdapter, CampfireConfig
 from openpaws.channels.gmail import GmailAdapter, GmailConfig
@@ -323,6 +324,7 @@ class Daemon:
         self._runner: ConversationRunner | None = None
         self._queue_manager: QueueManager | None = None
         self._heartbeat_task: asyncio.Task | None = None
+        self._agent_server_manager: AgentServerManager | None = None
 
     @property
     def queue_manager(self) -> QueueManager | None:
@@ -395,10 +397,31 @@ class Daemon:
         self.storage = Storage()
         logger.info(f"Storage initialized: {self.storage.db_path}")
 
+    def _setup_agent_server_manager(self) -> None:
+        """Initialize agent server manager if remote servers are enabled."""
+        if not self.config.remote_servers.enabled:
+            logger.info("Remote servers disabled, using in-process conversations")
+            return
+
+        base_dir = get_openpaws_dir() / "agent_servers"
+        self._agent_server_manager = AgentServerManager(
+            base_dir=base_dir,
+            port_start=self.config.remote_servers.port_start,
+            port_end=self.config.remote_servers.port_end,
+        )
+        port_range = self.config.remote_servers
+        logger.info(
+            f"AgentServerManager configured (ports {port_range.port_start}"
+            f"-{port_range.port_end})"
+        )
+
     def _setup_runner(self) -> None:
         """Initialize the conversation runner."""
         # Queue callback is set up later in _setup_queue_manager
-        self._runner = ConversationRunner(self.config)
+        self._runner = ConversationRunner(
+            self.config,
+            server_manager=self._agent_server_manager,
+        )
         logger.info("Conversation runner initialized")
 
     def _setup_scheduler(self) -> None:
@@ -654,6 +677,9 @@ class Daemon:
         await self._stop_channel_adapters()
         if self.scheduler:
             self.scheduler.stop()
+        # Shutdown agent server manager (pauses conversations, servers keep running)
+        if self._agent_server_manager:
+            await self._agent_server_manager.shutdown(pause_conversations=True)
         logger.info("OpenPaws daemon stopped")
 
     def _initialize(self) -> None:
@@ -664,6 +690,7 @@ class Daemon:
         )
         self._load_config()
         self._setup_storage()
+        self._setup_agent_server_manager()  # Must be before _setup_runner
         self._setup_runner()
         self._setup_scheduler()
         self._setup_queue_manager()
@@ -681,12 +708,19 @@ class Daemon:
             self._heartbeat_task.cancel()
             logger.info("Heartbeat task cancelled")
 
+    async def _start_agent_server_manager(self) -> None:
+        """Start the agent server manager and reconnect to existing servers."""
+        if self._agent_server_manager:
+            await self._agent_server_manager.startup()
+            logger.info("AgentServerManager started")
+
     async def run(self) -> None:
         """Main daemon run loop."""
         self._initialize()
         self._setup_signal_handlers()
         self._log_startup_info()
 
+        await self._start_agent_server_manager()
         self.scheduler.start(self._execute_task)
         self._start_heartbeat_if_enabled()
         await self._start_channel_adapters()

@@ -630,3 +630,118 @@ class TestProactiveTaskMessaging:
         await daemon_obj._execute_task(mock_task)
 
         daemon_obj._send_task_result_to_channel.assert_not_called()
+
+
+class TestAgentServerManagerIntegration:
+    """Tests for AgentServerManager integration in Daemon."""
+
+    def test_agent_server_manager_none_when_disabled(self, tmp_path):
+        """Test that agent server manager is None when remote_servers disabled."""
+
+        from openpaws.daemon import Daemon
+
+        config_content = """
+channels:
+  slack:
+    app_token: "xapp-test"
+    bot_token: "xoxb-test"
+
+groups:
+  main:
+    channel: slack
+    chat_id: "C123"
+
+tasks:
+  daily:
+    schedule: "0 9 * * *"
+    group: main
+    prompt: "Daily summary"
+
+remote_servers:
+  enabled: false
+"""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(config_content)
+
+        daemon = Daemon(config_path=config_file)
+        daemon._load_config()
+        daemon._setup_agent_server_manager()
+
+        assert daemon._agent_server_manager is None
+
+    def test_agent_server_manager_created_when_enabled(self, tmp_path, monkeypatch):
+        """Test that agent server manager is created when remote_servers enabled."""
+        from openpaws.daemon import Daemon
+
+        # Set OPENPAWS_DIR to use tmp_path
+        monkeypatch.setenv("OPENPAWS_DIR", str(tmp_path))
+
+        config_content = """
+channels:
+  slack:
+    app_token: "xapp-test"
+    bot_token: "xoxb-test"
+
+groups:
+  main:
+    channel: slack
+    chat_id: "C123"
+
+tasks:
+  daily:
+    schedule: "0 9 * * *"
+    group: main
+    prompt: "Daily summary"
+
+remote_servers:
+  enabled: true
+  port_start: 19000
+  port_end: 19050
+"""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(config_content)
+
+        daemon = Daemon(config_path=config_file)
+        daemon._load_config()
+        daemon._setup_agent_server_manager()
+
+        assert daemon._agent_server_manager is not None
+        assert daemon._agent_server_manager.port_start == 19000
+        assert daemon._agent_server_manager.port_end == 19050
+
+    def test_runner_receives_server_manager(self, tmp_path, monkeypatch):
+        """Test that ConversationRunner receives the server_manager."""
+        from openpaws.daemon import Daemon
+
+        # Set OPENPAWS_DIR to use tmp_path
+        monkeypatch.setenv("OPENPAWS_DIR", str(tmp_path))
+
+        config_content = """
+channels:
+  slack:
+    app_token: "xapp-test"
+    bot_token: "xoxb-test"
+
+groups:
+  main:
+    channel: slack
+    chat_id: "C123"
+
+tasks:
+  daily:
+    schedule: "0 9 * * *"
+    group: main
+    prompt: "Daily summary"
+
+remote_servers:
+  enabled: true
+"""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(config_content)
+
+        daemon = Daemon(config_path=config_file)
+        daemon._load_config()
+        daemon._setup_agent_server_manager()
+        daemon._setup_runner()
+
+        assert daemon._runner._server_manager is daemon._agent_server_manager
