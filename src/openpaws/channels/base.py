@@ -7,10 +7,55 @@ abstract base class for consistent message handling across platforms.
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
+from typing import Any
 
 # Callback types for status updates during message processing
 StatusCallback = Callable[[], Awaitable[None]]
 SendCallback = Callable[[str], Awaitable[None]]
+
+
+@dataclass
+class ChannelContext:
+    """Context needed to post messages directly to a channel.
+
+    This is injected into conversation state so tools can post
+    directly without routing through the daemon. Enables remote mode
+    conversations to send status updates and final responses.
+
+    Attributes:
+        channel_type: The type of channel (e.g., "campfire", "slack")
+        channel_id: Room/channel ID to post to
+        thread_id: Thread ID for replies (optional)
+        base_url: API base URL (for self-hosted like Campfire)
+        credential_key: Key name to look up in secret_registry
+    """
+
+    channel_type: str
+    channel_id: str
+    thread_id: str | None = None
+    base_url: str | None = None
+    credential_key: str = "CHANNEL_CREDENTIAL"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict for storage in agent_state."""
+        return {
+            "channel_type": self.channel_type,
+            "channel_id": self.channel_id,
+            "thread_id": self.thread_id,
+            "base_url": self.base_url,
+            "credential_key": self.credential_key,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ChannelContext":
+        """Reconstruct from agent_state dict."""
+        return cls(
+            channel_type=data["channel_type"],
+            channel_id=data["channel_id"],
+            thread_id=data.get("thread_id"),
+            base_url=data.get("base_url"),
+            credential_key=data.get("credential_key", "CHANNEL_CREDENTIAL"),
+        )
 
 
 @dataclass

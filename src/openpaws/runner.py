@@ -20,6 +20,7 @@ from openhands.tools.task_tracker import TaskTrackerTool
 from openhands.tools.terminal import TerminalTool
 from pydantic import SecretStr
 
+from openpaws.channels.base import ChannelContext
 from openpaws.config import Config, GroupConfig
 from openpaws.tools import (
     QueueNextTool,
@@ -87,6 +88,7 @@ class ConversationResult:
     message: str
     events: list[Event] = field(default_factory=list)
     error: str | None = None
+    conversation_id: str | None = None
 
 
 class ConversationRunner:
@@ -264,15 +266,52 @@ class ConversationRunner:
         group: GroupConfig,
         conversation_id: UUID | None,
         callbacks: list,
+        channel_context: ChannelContext | None = None,
+        credential_value: str | None = None,
     ) -> Conversation:
-        """Create a Conversation instance for a group."""
-        return Conversation(
+        """Create a Conversation instance for a group.
+
+        Args:
+            group: Group configuration
+            conversation_id: Optional conversation ID for persistence
+            callbacks: Event callbacks
+            channel_context: Optional channel context for direct posting
+            credential_value: Credential value to store in secret_registry
+        """
+        conv = Conversation(
             agent=self.agent,
             workspace=self._get_group_workspace(group),
             persistence_dir=self._get_group_persistence_dir(group),
             conversation_id=conversation_id,
             callbacks=callbacks,
         )
+        if channel_context:
+            self._inject_channel_context(conv, channel_context, credential_value)
+        return conv
+
+    def _inject_channel_context(
+        self,
+        conv: Conversation,
+        ctx: ChannelContext,
+        credential_value: str | None = None,
+    ) -> None:
+        """Inject channel context into conversation state.
+
+        Args:
+            conv: The conversation to inject into
+            ctx: Channel context with posting details
+            credential_value: Credential value to store (bot key/token)
+        """
+        # Store non-sensitive data in agent_state
+        conv.state.agent_state["channel_context"] = ctx.to_dict()
+        logger.debug(f"Injected channel_context for {ctx.channel_type}")
+
+        # Store credential in secret_registry if provided
+        if credential_value:
+            conv.state.secret_registry.update_secrets({
+                ctx.credential_key: credential_value,
+            })
+            logger.debug(f"Stored credential with key {ctx.credential_key}")
 
     def _run_conversation(
         self, conversation: Conversation, prompt: str, events: list[Event]
@@ -310,14 +349,27 @@ class ConversationRunner:
         unregister_queue_callback(conv_id)
 
     async def _execute_prompt_local(
-        self, group: GroupConfig, prompt: str, conversation_id, callbacks, send_callback
+        self,
+        group: GroupConfig,
+        prompt: str,
+        conversation_id,
+        callbacks,
+        send_callback,
+        channel_context: ChannelContext | None = None,
+        credential_value: str | None = None,
     ) -> ConversationResult:
         """Execute the prompt locally with callback registration and cleanup."""
         events: list[Event] = []
         conv = None
         try:
             cbs = self._build_callbacks(events, callbacks)
-            conv = self._create_conversation(group, conversation_id, cbs)
+            conv = self._create_conversation(
+                group,
+                conversation_id,
+                cbs,
+                channel_context=channel_context,
+                credential_value=credential_value,
+            )
             self._register_callbacks(conv, send_callback)
             return self._run_conversation(conv, prompt, events)
         except Exception as e:
@@ -327,26 +379,58 @@ class ConversationRunner:
                 self._unregister_callbacks(conv)
 
     async def _execute_prompt_remote(
-        self, group: GroupConfig, prompt: str, send_callback: SendCallback | None
+        self,
+        group: GroupConfig,
+        prompt: str,
+        channel_context: ChannelContext | None = None,
+        credential_value: str | None = None,
     ) -> ConversationResult:
-        """Execute the prompt via remote agent-server."""
+        """Execute the prompt via remote agent-server (fire-and-forget).
+
+        In remote mode, we start the conversation and return immediately.
+        The agent posts status and final response directly to the channel.
+        """
         try:
-            await self._setup_remote_conversation(group)
+            conv_id = await self._setup_remote_conversation(
+                group, channel_context, credential_value
+            )
             await self._server_manager.send_message(group.name, prompt)
             await self._server_manager.run_conversation(group.name)
-            response = await self._wait_for_remote_completion(group.name, send_callback)
-            return ConversationResult(success=True, message=response)
+
+            # Fire-and-forget: return immediately, agent posts to channel directly
+            return ConversationResult(
+                success=True,
+                message="Conversation started (response will be posted to channel)",
+                conversation_id=conv_id,
+            )
         except Exception as e:
             return self._handle_remote_error(group.name, e)
 
-    async def _setup_remote_conversation(self, group: GroupConfig) -> str:
+    async def _setup_remote_conversation(
+        self,
+        group: GroupConfig,
+        channel_context: ChannelContext | None = None,
+        credential_value: str | None = None,
+    ) -> str:
         """Set up a remote conversation on agent-server."""
         server = await self._server_manager.get_or_create_server(group.name)
         logger.info(f"Using agent-server on port {server.port} for {group.name}")
         workspace = self._get_group_workspace(group)
         agent_config = self._build_agent_config()
+
+        # Build context dict for remote server
+        context = {}
+        if channel_context:
+            context["channel_context"] = channel_context.to_dict()
+        if credential_value and channel_context:
+            context["credential_key"] = channel_context.credential_key
+            context["credential_value"] = credential_value
+
         conv_id = await self._server_manager.start_conversation(
-            group_id=group.name, agent_config=agent_config, workspace=workspace
+            group_id=group.name,
+            agent_config=agent_config,
+            workspace=workspace,
+            context=context if context else None,
         )
         logger.info(f"Remote conversation {conv_id} for {group.name}")
         return conv_id
@@ -373,40 +457,9 @@ class ConversationRunner:
             "system_prompt": self._build_custom_instructions(),
         }
 
-    async def _wait_for_remote_completion(
-        self, group_id: str, send_callback: SendCallback | None
-    ) -> str:
-        """Wait for remote conversation to complete and return the response."""
-        import asyncio
-
-        max_wait, poll_interval = 600, 2  # 10 minutes max, 2 second poll
-        for _ in range(max_wait // poll_interval):
-            result = await self._check_remote_status(group_id)
-            if result is not None:
-                return result
-            await asyncio.sleep(poll_interval)
-        return "Conversation timed out waiting for completion"
-
-    async def _check_remote_status(self, group_id: str) -> str | None:
-        """Check remote conversation status and return result if complete."""
-        status = await self._server_manager.get_conversation_status(group_id)
-        if status is None:
-            return "Conversation not found"
-        if status in ("completed", "finished", "idle"):
-            return await self._get_remote_response(group_id)
-        if status == "error":
-            return "Conversation encountered an error"
-        return None
-
-    async def _get_remote_response(self, group_id: str) -> str:
-        """Get the final response from a remote conversation.
-
-        Fetches the conversation events and extracts the final response.
-        """
-        # For now, return a placeholder - full implementation would fetch
-        # events from the server and extract the response
-        # This requires the agent-server to expose an events endpoint
-        return "Remote conversation completed (response extraction not yet implemented)"
+    # NOTE: Polling methods (_wait_for_remote_completion, _check_remote_status,
+    # _get_remote_response) were removed in favor of fire-and-forget mode.
+    # In remote mode, the agent posts directly to the channel via ChannelContext.
 
     async def run_prompt(
         self,
@@ -416,18 +469,38 @@ class ConversationRunner:
         conversation_id: UUID | None = None,
         callbacks: list | None = None,
         send_callback: SendCallback | None = None,
+        channel_context: ChannelContext | None = None,
+        credential_value: str | None = None,
     ) -> ConversationResult:
-        """Run a conversation with a prompt for a specific group."""
+        """Run a conversation with a prompt for a specific group.
+
+        Args:
+            group_name: Name of the group to run the conversation in.
+            prompt: The prompt/message to send to the agent.
+            conversation_id: Optional conversation ID for persistence.
+            callbacks: Optional event callbacks.
+            send_callback: Optional callback for status messages (local mode only).
+            channel_context: Optional channel context for direct posting.
+            credential_value: Credential value (bot key/token) for direct posting.
+        """
         group = self.config.groups.get(group_name)
         if not group:
             return self._group_not_found_result(group_name)
 
         # Use remote servers if enabled
         if self.use_remote_servers:
-            return await self._execute_prompt_remote(group, prompt, send_callback)
+            return await self._execute_prompt_remote(
+                group, prompt, channel_context, credential_value
+            )
 
         return await self._execute_prompt_local(
-            group, prompt, conversation_id, callbacks, send_callback
+            group,
+            prompt,
+            conversation_id,
+            callbacks,
+            send_callback,
+            channel_context=channel_context,
+            credential_value=credential_value,
         )
 
     def _group_not_found_result(self, group_name: str) -> ConversationResult:
@@ -451,6 +524,8 @@ class ConversationRunner:
         sender: str | None = None,
         conversation_id: UUID | None = None,
         send_callback: SendCallback | None = None,
+        channel_context: ChannelContext | None = None,
+        credential_value: str | None = None,
     ) -> ConversationResult:
         """Handle an incoming message from a channel.
 
@@ -459,13 +534,17 @@ class ConversationRunner:
             message: The user's message text.
             sender: Optional sender name for context.
             conversation_id: Optional conversation ID for persistence.
-            send_callback: Optional callback for sending status messages to the channel.
+            send_callback: Optional callback for status messages (local mode fallback).
+            channel_context: Optional channel context for direct posting.
+            credential_value: Credential value (bot key/token) for direct posting.
         """
         return await self.run_prompt(
             group_name=group_name,
             prompt=message,
             conversation_id=conversation_id,
             send_callback=send_callback,
+            channel_context=channel_context,
+            credential_value=credential_value,
         )
 
     def _extract_finish_action_message(self, event) -> str | None:
