@@ -135,10 +135,7 @@ class ConversationRunner:
     @property
     def use_remote_servers(self) -> bool:
         """Check if remote server mode is enabled."""
-        return (
-            self.config.remote_servers.enabled
-            and self._server_manager is not None
-        )
+        return self.config.remote_servers.enabled and self._server_manager is not None
 
     @property
     def llm(self) -> LLM:
@@ -332,44 +329,38 @@ class ConversationRunner:
     async def _execute_prompt_remote(
         self, group: GroupConfig, prompt: str, send_callback: SendCallback | None
     ) -> ConversationResult:
-        """Execute the prompt via remote agent-server.
-
-        This runs the conversation in a separate process that survives
-        daemon restarts. The agent-server handles persistence and can
-        be reconnected to after a daemon restart.
-        """
+        """Execute the prompt via remote agent-server."""
         try:
-            # Get or create server for this group
-            server = await self._server_manager.get_or_create_server(group.name)
-            logger.info(f"Using agent-server on port {server.port} for {group.name}")
-
-            # Start or resume conversation on the server
-            workspace = self._get_group_workspace(group)
-            agent_config = self._build_agent_config()
-            conv_id = await self._server_manager.start_conversation(
-                group_id=group.name,
-                agent_config=agent_config,
-                workspace=workspace,
-            )
-            logger.info(f"Remote conversation {conv_id} for {group.name}")
-
-            # Send the message
+            await self._setup_remote_conversation(group)
             await self._server_manager.send_message(group.name, prompt)
-
-            # Trigger the run
             await self._server_manager.run_conversation(group.name)
-
-            # Wait for completion and get the response
             response = await self._wait_for_remote_completion(group.name, send_callback)
             return ConversationResult(success=True, message=response)
-
         except Exception as e:
-            logger.exception(f"Remote conversation error for {group.name}: {e}")
-            return ConversationResult(
-                success=False,
-                message=f"Remote conversation failed: {e}",
-                error=str(e),
-            )
+            return self._handle_remote_error(group.name, e)
+
+    async def _setup_remote_conversation(self, group: GroupConfig) -> str:
+        """Set up a remote conversation on agent-server."""
+        server = await self._server_manager.get_or_create_server(group.name)
+        logger.info(f"Using agent-server on port {server.port} for {group.name}")
+        workspace = self._get_group_workspace(group)
+        agent_config = self._build_agent_config()
+        conv_id = await self._server_manager.start_conversation(
+            group_id=group.name, agent_config=agent_config, workspace=workspace
+        )
+        logger.info(f"Remote conversation {conv_id} for {group.name}")
+        return conv_id
+
+    def _handle_remote_error(
+        self, group_name: str, error: Exception
+    ) -> ConversationResult:
+        """Handle errors from remote conversation execution."""
+        logger.exception(f"Remote conversation error for {group_name}: {error}")
+        return ConversationResult(
+            success=False,
+            message=f"Remote conversation failed: {error}",
+            error=str(error),
+        )
 
     def _build_agent_config(self) -> dict:
         """Build agent configuration dict for remote server."""
@@ -385,32 +376,27 @@ class ConversationRunner:
     async def _wait_for_remote_completion(
         self, group_id: str, send_callback: SendCallback | None
     ) -> str:
-        """Wait for remote conversation to complete and return the response.
-
-        This polls the conversation status until it's no longer running.
-        In the future, this could use WebSocket events for real-time updates.
-        """
+        """Wait for remote conversation to complete and return the response."""
         import asyncio
 
-        max_wait = 600  # 10 minutes max
-        poll_interval = 2  # seconds
-
+        max_wait, poll_interval = 600, 2  # 10 minutes max, 2 second poll
         for _ in range(max_wait // poll_interval):
-            status = await self._server_manager.get_conversation_status(group_id)
-
-            if status is None:
-                return "Conversation not found"
-
-            if status in ("completed", "finished", "idle"):
-                # Get the final response from the conversation
-                return await self._get_remote_response(group_id)
-
-            if status == "error":
-                return "Conversation encountered an error"
-
+            result = await self._check_remote_status(group_id)
+            if result is not None:
+                return result
             await asyncio.sleep(poll_interval)
-
         return "Conversation timed out waiting for completion"
+
+    async def _check_remote_status(self, group_id: str) -> str | None:
+        """Check remote conversation status and return result if complete."""
+        status = await self._server_manager.get_conversation_status(group_id)
+        if status is None:
+            return "Conversation not found"
+        if status in ("completed", "finished", "idle"):
+            return await self._get_remote_response(group_id)
+        if status == "error":
+            return "Conversation encountered an error"
+        return None
 
     async def _get_remote_response(self, group_id: str) -> str:
         """Get the final response from a remote conversation.
