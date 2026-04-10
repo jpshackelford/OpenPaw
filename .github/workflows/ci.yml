@@ -74,7 +74,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-data
-          path: coverage.xml
+          path: |
+            coverage.xml
+            .coverage
           if-no-files-found: error
 
   complexity:
