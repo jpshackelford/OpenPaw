@@ -74,8 +74,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-data
-          path: coverage.xml
+          path: |
+            coverage.xml
+            .coverage
           if-no-files-found: error
+          include-hidden-files: true
 
   complexity:
     name: Complexity
@@ -137,20 +140,6 @@ jobs:
         with:
           name: coverage-data
         continue-on-error: true
-
-      - name: Debug coverage data
-        run: |
-          echo "=== Files in current directory ==="
-          ls -la
-          echo "=== .coverage file info ==="
-          if [ -f .coverage ]; then
-            file .coverage
-            python -m coverage debug data
-          else
-            echo ".coverage file not found"
-          fi
-          echo "=== Test coverage json output ==="
-          python -m coverage json -o - 2>&1 | head -100 || echo "coverage json failed"
 
       - name: Generate quality report
         run: python scripts/quality_report.py -o quality-report.md
