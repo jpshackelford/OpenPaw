@@ -682,7 +682,9 @@ class Daemon:
             try:
                 await self._agent_server_manager.shutdown(pause_conversations=True)
             except Exception as e:
-                logger.error(f"Error during AgentServerManager shutdown: {e}", exc_info=True)
+                logger.error(
+                    f"Error during AgentServerManager shutdown: {e}", exc_info=True
+                )
         logger.info("OpenPaws daemon stopped")
 
     def _initialize(self) -> None:
@@ -718,8 +720,12 @@ class Daemon:
                 await self._agent_server_manager.startup()
                 logger.info("AgentServerManager started")
             except Exception as e:
-                logger.error(f"Failed to start AgentServerManager: {e}", exc_info=True)
-                logger.warning("Continuing without remote servers (falling back to local mode)")
+                logger.error(
+                    f"Failed to start AgentServerManager: {e}", exc_info=True
+                )
+                logger.warning(
+                    "Continuing without remote servers (falling back to local mode)"
+                )
                 self._agent_server_manager = None
 
     async def run(self) -> None:
