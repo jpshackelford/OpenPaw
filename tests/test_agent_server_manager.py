@@ -156,6 +156,66 @@ class TestPortAllocation:
         assert port3 == 18002
         assert port4 == 18000
 
+    def test_allocate_port_skips_unavailable(self, tmp_path: Path):
+        """Port allocation skips unavailable ports."""
+        import socket
+
+        manager = AgentServerManager(
+            base_dir=tmp_path, port_start=18000, port_end=18010
+        )
+
+        # Bind to port 18000 so it's unavailable
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 18000))
+            s.listen(1)
+
+            port = manager._allocate_port()
+            # Should skip 18000 and return 18001
+            assert port == 18001
+
+    def test_allocate_port_raises_when_exhausted(self, tmp_path: Path):
+        """Port allocation raises when all ports unavailable."""
+        import socket
+
+        manager = AgentServerManager(
+            base_dir=tmp_path, port_start=18050, port_end=18052
+        )
+
+        # Bind to all ports in range
+        sockets = []
+        for port in range(18050, 18053):
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.bind(("127.0.0.1", port))
+            s.listen(1)
+            sockets.append(s)
+
+        try:
+            with pytest.raises(RuntimeError, match="No available ports"):
+                manager._allocate_port()
+        finally:
+            for s in sockets:
+                s.close()
+
+    def test_is_port_available_returns_true_for_free_port(self, tmp_path: Path):
+        """_is_port_available returns True for unbound port."""
+        manager = AgentServerManager(
+            base_dir=tmp_path, port_start=18060, port_end=18070
+        )
+        assert manager._is_port_available(18060) is True
+
+    def test_is_port_available_returns_false_for_bound_port(self, tmp_path: Path):
+        """_is_port_available returns False for bound port."""
+        import socket
+
+        manager = AgentServerManager(
+            base_dir=tmp_path, port_start=18060, port_end=18070
+        )
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 18061))
+            s.listen(1)
+            assert manager._is_port_available(18061) is False
+
 
 class TestRegistryPersistence:
     """Tests for registry save/load."""
@@ -547,6 +607,36 @@ class TestStartServerProcess:
 
         assert result == mock_popen
         mock_cls.assert_called_once()
+
+    def test_creates_log_directory(self, tmp_path: Path):
+        """_start_server_process creates logs/servers directory."""
+        manager = AgentServerManager(base_dir=tmp_path)
+        mock_popen = MagicMock()
+
+        with patch(
+            "openpaws.agent_server_manager.subprocess.Popen", return_value=mock_popen
+        ):
+            manager._start_server_process(18000)
+
+        log_dir = tmp_path / "logs" / "servers"
+        assert log_dir.exists()
+
+    def test_redirects_output_to_log_file(self, tmp_path: Path):
+        """_start_server_process redirects stdout/stderr to log file."""
+        import subprocess
+
+        manager = AgentServerManager(base_dir=tmp_path)
+
+        with patch(
+            "openpaws.agent_server_manager.subprocess.Popen"
+        ) as mock_cls:
+            manager._start_server_process(18000)
+
+        # Check that Popen was called with file handle for stdout
+        call_kwargs = mock_cls.call_args[1]
+        assert call_kwargs["stderr"] == subprocess.STDOUT
+        # stdout should be a file handle (not DEVNULL)
+        assert call_kwargs["stdout"] is not subprocess.DEVNULL
 
 
 class TestWaitForServerReady:

@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import signal
+import socket
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -190,23 +191,47 @@ class AgentServerManager:
         cmd = ["agent-server", "--host", "127.0.0.1", "--port", str(port)]
         env = os.environ.copy()
         env["OPENHANDS_CONVERSATIONS_DIR"] = str(self.conversations_dir)
+
+        # Redirect output to log file for debugging
+        log_dir = self.base_dir / "logs" / "servers"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"agent-server-{port}.log"
+        log_handle = open(log_file, "a")
+
         return subprocess.Popen(
             cmd,
             env=env,
             start_new_session=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
         )
+
+    def _is_port_available(self, port: int) -> bool:
+        """Check if a port is available for binding."""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", port))
+                return True
+        except OSError:
+            return False
 
     def _allocate_port(self) -> int:
         """Allocate next available port."""
-        # Simple sequential allocation
-        # Could be smarter about reusing ports from dead servers
-        port = self._next_port
-        self._next_port += 1
-        if self._next_port > self.port_end:
-            self._next_port = self.port_start
-        return port
+        # Try ports in sequence, skipping unavailable ones
+        max_attempts = self.port_end - self.port_start + 1
+        for _ in range(max_attempts):
+            port = self._next_port
+            self._next_port += 1
+            if self._next_port > self.port_end:
+                self._next_port = self.port_start
+
+            if self._is_port_available(port):
+                return port
+            logger.debug(f"Port {port} unavailable, trying next")
+
+        raise RuntimeError(
+            f"No available ports in range {self.port_start}-{self.port_end}"
+        )
 
     async def _wait_for_server_ready(
         self, port: int, timeout: float = 30.0, interval: float = 0.5
@@ -214,15 +239,18 @@ class AgentServerManager:
         """Wait for server to be ready to accept connections."""
         url = f"http://127.0.0.1:{port}/health"
         deadline = asyncio.get_event_loop().time() + timeout
+        attempt = 0
 
         while asyncio.get_event_loop().time() < deadline:
             try:
                 response = await self._http_client.get(url)
                 if response.status_code == 200:
-                    logger.debug(f"Server on port {port} is ready")
+                    logger.debug(f"Server on port {port} is ready after {attempt} attempts")
                     return
-            except httpx.ConnectError:
-                pass  # Server not ready yet
+            except httpx.ConnectError as e:
+                attempt += 1
+                if attempt % 10 == 0:  # Log every ~5 seconds
+                    logger.debug(f"Waiting for server on port {port} (attempt {attempt}): {e}")
             await asyncio.sleep(interval)
 
         raise TimeoutError(f"Server on port {port} did not become ready in {timeout}s")
@@ -240,7 +268,12 @@ class AgentServerManager:
             url = f"http://127.0.0.1:{server.port}/health"
             response = await self._http_client.get(url)
             return response.status_code == 200
-        except Exception:
+        except (httpx.ConnectError, httpx.TimeoutException):
+            return False
+        except Exception as e:
+            logger.warning(
+                f"Unexpected error checking health for server on port {server.port}: {e}"
+            )
             return False
 
     # =========================================================================
