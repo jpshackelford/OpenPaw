@@ -679,7 +679,10 @@ class Daemon:
             self.scheduler.stop()
         # Shutdown agent server manager (pauses conversations, servers keep running)
         if self._agent_server_manager:
-            await self._agent_server_manager.shutdown(pause_conversations=True)
+            try:
+                await self._agent_server_manager.shutdown(pause_conversations=True)
+            except Exception as e:
+                logger.error(f"Error during AgentServerManager shutdown: {e}", exc_info=True)
         logger.info("OpenPaws daemon stopped")
 
     def _initialize(self) -> None:
@@ -711,8 +714,13 @@ class Daemon:
     async def _start_agent_server_manager(self) -> None:
         """Start the agent server manager and reconnect to existing servers."""
         if self._agent_server_manager:
-            await self._agent_server_manager.startup()
-            logger.info("AgentServerManager started")
+            try:
+                await self._agent_server_manager.startup()
+                logger.info("AgentServerManager started")
+            except Exception as e:
+                logger.error(f"Failed to start AgentServerManager: {e}", exc_info=True)
+                logger.warning("Continuing without remote servers (falling back to local mode)")
+                self._agent_server_manager = None
 
     async def run(self) -> None:
         """Main daemon run loop."""
