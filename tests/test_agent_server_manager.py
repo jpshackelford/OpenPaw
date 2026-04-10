@@ -167,9 +167,7 @@ class TestRegistryPersistence:
     @pytest.mark.asyncio
     async def test_save_registry_creates_file(self, manager: AgentServerManager):
         """Saving registry creates JSON file."""
-        manager._servers = {
-            "main": ServerInfo(pid=1234, port=18000, group_id="main")
-        }
+        manager._servers = {"main": ServerInfo(pid=1234, port=18000, group_id="main")}
 
         await manager._save_registry()
 
@@ -183,9 +181,7 @@ class TestRegistryPersistence:
         self, manager: AgentServerManager, tmp_path: Path
     ):
         """Registry saves atomically (no .tmp file left)."""
-        manager._servers = {
-            "main": ServerInfo(pid=1234, port=18000, group_id="main")
-        }
+        manager._servers = {"main": ServerInfo(pid=1234, port=18000, group_id="main")}
 
         await manager._save_registry()
 
@@ -261,6 +257,7 @@ class TestServerHealthCheck:
     async def test_unhealthy_when_http_fails(self, manager: AgentServerManager):
         """Server is unhealthy if HTTP health check fails."""
         import os
+
         server = ServerInfo(pid=os.getpid(), port=18000, group_id="main")
 
         # HTTP check fails
@@ -274,6 +271,7 @@ class TestServerHealthCheck:
     async def test_healthy_when_all_checks_pass(self, manager: AgentServerManager):
         """Server is healthy if process runs and HTTP succeeds."""
         import os
+
         server = ServerInfo(pid=os.getpid(), port=18000, group_id="main")
 
         # HTTP check succeeds
@@ -469,6 +467,303 @@ class TestReconcileServers:
         assert "alive" in manager._servers
 
 
+class TestGetOrCreateServer:
+    """Tests for get_or_create_server."""
+
+    @pytest.fixture
+    def manager(self, tmp_path: Path) -> AgentServerManager:
+        mgr = AgentServerManager(base_dir=tmp_path)
+        mgr._http_client = AsyncMock(spec=httpx.AsyncClient)
+        return mgr
+
+    @pytest.mark.asyncio
+    async def test_returns_existing_healthy_server(self, manager: AgentServerManager):
+        """Returns existing server if healthy."""
+        import os
+
+        existing = ServerInfo(pid=os.getpid(), port=18000, group_id="main")
+        manager._servers = {"main": existing}
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        manager._http_client.get.return_value = mock_response
+
+        result = await manager.get_or_create_server("main")
+
+        assert result == existing
+
+    @pytest.mark.asyncio
+    async def test_respawns_unhealthy_server(self, manager: AgentServerManager):
+        """Respawns server if existing one is unhealthy."""
+        existing = ServerInfo(pid=99999999, port=18000, group_id="main")
+        manager._servers = {"main": existing}
+
+        with patch.object(manager, "_spawn_server") as mock_spawn:
+            new_server = ServerInfo(pid=12345, port=18001, group_id="main")
+            mock_spawn.return_value = new_server
+            result = await manager.get_or_create_server("main")
+
+        assert result == new_server
+        mock_spawn.assert_called_once_with("main")
+
+
+class TestSpawnServer:
+    """Tests for _spawn_server."""
+
+    @pytest.fixture
+    def manager(self, tmp_path: Path) -> AgentServerManager:
+        mgr = AgentServerManager(base_dir=tmp_path)
+        mgr._http_client = AsyncMock(spec=httpx.AsyncClient)
+        return mgr
+
+    @pytest.mark.asyncio
+    async def test_spawn_server_returns_server_info(self, manager: AgentServerManager):
+        """_spawn_server returns ServerInfo with correct data."""
+        mock_process = MagicMock()
+        mock_process.pid = 54321
+
+        with (
+            patch.object(manager, "_start_server_process", return_value=mock_process),
+            patch.object(manager, "_wait_for_server_ready"),
+        ):
+            result = await manager._spawn_server("test-group")
+
+        assert result.pid == 54321
+        assert result.port == manager.port_start
+        assert result.group_id == "test-group"
+
+
+class TestStartServerProcess:
+    """Tests for _start_server_process."""
+
+    def test_returns_popen_object(self, tmp_path: Path):
+        """_start_server_process returns Popen object."""
+        manager = AgentServerManager(base_dir=tmp_path)
+        mock_popen = MagicMock()
+
+        with patch(
+            "openpaws.agent_server_manager.subprocess.Popen", return_value=mock_popen
+        ) as mock_cls:
+            result = manager._start_server_process(18000)
+
+        assert result == mock_popen
+        mock_cls.assert_called_once()
+
+
+class TestWaitForServerReady:
+    """Tests for _wait_for_server_ready."""
+
+    @pytest.fixture
+    def manager(self, tmp_path: Path) -> AgentServerManager:
+        mgr = AgentServerManager(base_dir=tmp_path)
+        mgr._http_client = AsyncMock(spec=httpx.AsyncClient)
+        return mgr
+
+    @pytest.mark.asyncio
+    async def test_returns_when_server_responds(self, manager: AgentServerManager):
+        """Returns when health check succeeds."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        manager._http_client.get.return_value = mock_response
+
+        # Should not raise
+        await manager._wait_for_server_ready(18000, timeout=1.0)
+
+        manager._http_client.get.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_raises_timeout_when_server_unresponsive(
+        self, manager: AgentServerManager
+    ):
+        """Raises TimeoutError if server never responds."""
+        manager._http_client.get.side_effect = httpx.ConnectError("refused")
+
+        with pytest.raises(TimeoutError):
+            await manager._wait_for_server_ready(18000, timeout=0.1, interval=0.05)
+
+
+class TestStartConversation:
+    """Tests for start_conversation."""
+
+    @pytest.fixture
+    def manager(self, tmp_path: Path) -> AgentServerManager:
+        mgr = AgentServerManager(base_dir=tmp_path)
+        mgr._http_client = AsyncMock(spec=httpx.AsyncClient)
+        return mgr
+
+    @pytest.mark.asyncio
+    async def test_start_conversation_returns_uuid(self, manager: AgentServerManager):
+        """start_conversation returns conversation UUID."""
+        server = ServerInfo(pid=1234, port=18000, group_id="main")
+        manager._servers = {"main": server}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}
+        mock_response.raise_for_status = MagicMock()
+        manager._http_client.post.return_value = mock_response
+
+        with patch.object(manager, "get_or_create_server", return_value=server):
+            result = await manager.start_conversation(
+                "main", {"model": "test"}, "/workspace"
+            )
+
+        assert result == UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        assert server.conversation_id == result
+
+
+class TestSendMessage:
+    """Tests for send_message."""
+
+    @pytest.fixture
+    def manager(self, tmp_path: Path) -> AgentServerManager:
+        mgr = AgentServerManager(base_dir=tmp_path)
+        mgr._http_client = AsyncMock(spec=httpx.AsyncClient)
+        return mgr
+
+    @pytest.mark.asyncio
+    async def test_send_message_raises_without_conversation(
+        self, manager: AgentServerManager
+    ):
+        """send_message raises if no active conversation."""
+        with pytest.raises(ValueError, match="No active conversation"):
+            await manager.send_message("nonexistent", "hello")
+
+    @pytest.mark.asyncio
+    async def test_send_message_posts_to_api(self, manager: AgentServerManager):
+        """send_message POSTs message to API."""
+        conv_id = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        server = ServerInfo(
+            pid=1234, port=18000, conversation_id=conv_id, group_id="main"
+        )
+        manager._servers = {"main": server}
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        manager._http_client.post.return_value = mock_response
+
+        await manager.send_message("main", "hello world")
+
+        manager._http_client.post.assert_called_once()
+        call_url = manager._http_client.post.call_args[0][0]
+        assert f"/api/conversations/{conv_id}/messages" in call_url
+
+
+class TestRunConversation:
+    """Tests for run_conversation."""
+
+    @pytest.fixture
+    def manager(self, tmp_path: Path) -> AgentServerManager:
+        mgr = AgentServerManager(base_dir=tmp_path)
+        mgr._http_client = AsyncMock(spec=httpx.AsyncClient)
+        return mgr
+
+    @pytest.mark.asyncio
+    async def test_run_raises_without_conversation(self, manager: AgentServerManager):
+        """run_conversation raises if no active conversation."""
+        with pytest.raises(ValueError, match="No active conversation"):
+            await manager.run_conversation("nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_run_posts_to_api(self, manager: AgentServerManager):
+        """run_conversation POSTs to run endpoint."""
+        conv_id = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        server = ServerInfo(
+            pid=1234, port=18000, conversation_id=conv_id, group_id="main"
+        )
+        manager._servers = {"main": server}
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        manager._http_client.post.return_value = mock_response
+
+        await manager.run_conversation("main")
+
+        manager._http_client.post.assert_called_once()
+        call_url = manager._http_client.post.call_args[0][0]
+        assert f"/api/conversations/{conv_id}/run" in call_url
+
+
+class TestGetConversationStatus:
+    """Tests for get_conversation_status."""
+
+    @pytest.fixture
+    def manager(self, tmp_path: Path) -> AgentServerManager:
+        mgr = AgentServerManager(base_dir=tmp_path)
+        mgr._http_client = AsyncMock(spec=httpx.AsyncClient)
+        return mgr
+
+    @pytest.mark.asyncio
+    async def test_returns_none_without_server(self, manager: AgentServerManager):
+        """Returns None if no server for group."""
+        result = await manager.get_conversation_status("nonexistent")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_status_from_api(self, manager: AgentServerManager):
+        """Returns execution_status from API response."""
+        conv_id = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        server = ServerInfo(
+            pid=1234, port=18000, conversation_id=conv_id, group_id="main"
+        )
+        manager._servers = {"main": server}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"execution_status": "running"}
+        manager._http_client.get.return_value = mock_response
+
+        result = await manager.get_conversation_status("main")
+
+        assert result == "running"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_error(self, manager: AgentServerManager):
+        """Returns None on API error."""
+        conv_id = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        server = ServerInfo(
+            pid=1234, port=18000, conversation_id=conv_id, group_id="main"
+        )
+        manager._servers = {"main": server}
+
+        manager._http_client.get.side_effect = httpx.ConnectError("refused")
+
+        result = await manager.get_conversation_status("main")
+
+        assert result is None
+
+
+class TestPauseAllConversations:
+    """Tests for _pause_all_conversations."""
+
+    @pytest.fixture
+    def manager(self, tmp_path: Path) -> AgentServerManager:
+        mgr = AgentServerManager(base_dir=tmp_path)
+        mgr._http_client = AsyncMock(spec=httpx.AsyncClient)
+        return mgr
+
+    @pytest.mark.asyncio
+    async def test_pauses_multiple_conversations(self, manager: AgentServerManager):
+        """Pauses all active conversations."""
+        conv_id1 = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        conv_id2 = UUID("11111111-2222-3333-4444-555555555555")
+        manager._servers = {
+            "group1": ServerInfo(
+                pid=1234, port=18000, conversation_id=conv_id1, group_id="group1"
+            ),
+            "group2": ServerInfo(
+                pid=5678, port=18001, conversation_id=conv_id2, group_id="group2"
+            ),
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        manager._http_client.post.return_value = mock_response
+
+        await manager._pause_all_conversations()
+
+        assert manager._http_client.post.call_count == 2
+
+
 class TestTerminateServer:
     """Tests for server termination."""
 
@@ -501,3 +796,55 @@ class TestTerminateServer:
 
         assert result is True
         assert "main" not in manager._servers
+
+    @pytest.mark.asyncio
+    async def test_terminate_with_force_uses_sigkill(self, manager: AgentServerManager):
+        """Termination with force=True uses SIGKILL."""
+        import os
+        import signal
+
+        manager._servers = {
+            "main": ServerInfo(pid=os.getpid(), port=18000, group_id="main")
+        }
+
+        with patch("openpaws.agent_server_manager.os.kill") as mock_kill:
+            await manager.terminate_server("main", force=True)
+            mock_kill.assert_called_with(os.getpid(), signal.SIGKILL)
+
+    @pytest.mark.asyncio
+    async def test_terminate_handles_oserror(self, manager: AgentServerManager):
+        """Termination handles OSError gracefully."""
+        manager._servers = {
+            "main": ServerInfo(pid=99999999, port=18000, group_id="main")
+        }
+
+        with patch(
+            "openpaws.agent_server_manager.os.kill",
+            side_effect=OSError("No such process"),
+        ):
+            result = await manager.terminate_server("main")
+
+        assert result is False
+
+
+class TestTerminateAllServers:
+    """Tests for terminate_all_servers."""
+
+    @pytest.fixture
+    def manager(self, tmp_path: Path) -> AgentServerManager:
+        return AgentServerManager(base_dir=tmp_path)
+
+    @pytest.mark.asyncio
+    async def test_terminates_all_servers(self, manager: AgentServerManager):
+        """Terminates all managed servers."""
+        import os
+
+        manager._servers = {
+            "group1": ServerInfo(pid=os.getpid(), port=18000, group_id="group1"),
+            "group2": ServerInfo(pid=os.getpid(), port=18001, group_id="group2"),
+        }
+
+        with patch("openpaws.agent_server_manager.os.kill"):
+            await manager.terminate_all_servers()
+
+        assert len(manager._servers) == 0

@@ -22,7 +22,7 @@ Shutdown behavior:
     - Optionally pauses all active conversations (non-blocking)
     - Daemon exits immediately
     - Agent servers continue running, finish current work, persist state
-    
+
 Startup behavior:
     - Daemon starts
     - AgentServerManager.startup() called
@@ -86,7 +86,7 @@ class ServerInfo:
 @dataclass
 class AgentServerManager:
     """Manages agent-server subprocess lifecycle.
-    
+
     Responsibilities:
     - Spawn agent-server processes on demand
     - Track running servers and their conversations
@@ -98,7 +98,7 @@ class AgentServerManager:
     base_dir: Path
     port_start: int = DEFAULT_PORT_START
     port_end: int = DEFAULT_PORT_END
-    
+
     # Runtime state
     _servers: dict[str, ServerInfo] = field(default_factory=dict)
     _http_client: httpx.AsyncClient | None = field(default=None, init=False)
@@ -125,20 +125,20 @@ class AgentServerManager:
         """Initialize manager and reconnect to any existing servers."""
         self._http_client = httpx.AsyncClient(timeout=30.0)
         self.conversations_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Load existing server registry
         await self._load_registry()
-        
+
         # Check which servers are still running
         await self._reconcile_servers()
-        
+
         logger.info(
             f"AgentServerManager started with {len(self._servers)} active servers"
         )
 
     async def shutdown(self, pause_conversations: bool = True) -> None:
         """Shutdown manager, optionally pausing active conversations.
-        
+
         Args:
             pause_conversations: If True, send pause request to all active
                 conversations before detaching. Servers will finish their
@@ -146,15 +146,15 @@ class AgentServerManager:
         """
         if pause_conversations:
             await self._pause_all_conversations()
-        
+
         # Save registry so we can reconnect on restart
         await self._save_registry()
-        
+
         # Close HTTP client
         if self._http_client:
             await self._http_client.aclose()
             self._http_client = None
-        
+
         logger.info("AgentServerManager shutdown complete - servers continue running")
 
     # =========================================================================
@@ -170,7 +170,7 @@ class AgentServerManager:
             else:
                 logger.warning(f"Server for {group_id} unhealthy, respawning")
                 del self._servers[group_id]
-        
+
         # Spawn new server
         server = await self._spawn_server(group_id)
         self._servers[group_id] = server
@@ -180,39 +180,22 @@ class AgentServerManager:
     async def _spawn_server(self, group_id: str) -> ServerInfo:
         """Spawn a new agent-server subprocess."""
         port = self._allocate_port()
-        
-        # Build command
-        cmd = [
-            "agent-server",
-            "--host", "127.0.0.1",
-            "--port", str(port),
-        ]
-        
-        # Set environment for conversations directory
+        process = self._start_server_process(port)
+        logger.info(f"Spawned agent-server for {group_id} on port {port}")
+        await self._wait_for_server_ready(port)
+        return ServerInfo(pid=process.pid, port=port, group_id=group_id)
+
+    def _start_server_process(self, port: int) -> subprocess.Popen:
+        """Start agent-server subprocess on given port."""
+        cmd = ["agent-server", "--host", "127.0.0.1", "--port", str(port)]
         env = os.environ.copy()
         env["OPENHANDS_CONVERSATIONS_DIR"] = str(self.conversations_dir)
-        
-        # Spawn process
-        # Use start_new_session=True so server survives daemon exit
-        process = subprocess.Popen(
+        return subprocess.Popen(
             cmd,
             env=env,
-            start_new_session=True,  # Detach from parent process group
+            start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-        )
-
-        logger.info(
-            f"Spawned agent-server for {group_id} on port {port} (PID {process.pid})"
-        )
-
-        # Wait for server to be ready
-        await self._wait_for_server_ready(port)
-        
-        return ServerInfo(
-            pid=process.pid,
-            port=port,
-            group_id=group_id,
         )
 
     def _allocate_port(self) -> int:
@@ -231,7 +214,7 @@ class AgentServerManager:
         """Wait for server to be ready to accept connections."""
         url = f"http://127.0.0.1:{port}/health"
         deadline = asyncio.get_event_loop().time() + timeout
-        
+
         while asyncio.get_event_loop().time() < deadline:
             try:
                 response = await self._http_client.get(url)
@@ -241,7 +224,7 @@ class AgentServerManager:
             except httpx.ConnectError:
                 pass  # Server not ready yet
             await asyncio.sleep(interval)
-        
+
         raise TimeoutError(f"Server on port {port} did not become ready in {timeout}s")
 
     async def _is_server_healthy(self, server: ServerInfo) -> bool:
@@ -251,7 +234,7 @@ class AgentServerManager:
             os.kill(server.pid, 0)  # Signal 0 = check if process exists
         except OSError:
             return False
-        
+
         # Then check HTTP health
         try:
             url = f"http://127.0.0.1:{server.port}/health"
@@ -272,51 +255,43 @@ class AgentServerManager:
         return None
 
     async def start_conversation(
-        self,
-        group_id: str,
-        agent_config: dict,
-        workspace_dir: str | Path,
+        self, group_id: str, agent_config: dict, workspace_dir: str | Path
     ) -> UUID:
-        """Start a new conversation on the server for this group.
-        
-        Returns the conversation UUID.
-        """
+        """Start a new conversation on the server for this group."""
         server = await self.get_or_create_server(group_id)
-        url = f"http://127.0.0.1:{server.port}/api/conversations"
-        
-        # Build request payload
-        payload = {
-            "agent": agent_config,
-            "workspace": {
-                "working_dir": str(workspace_dir),
-            },
-        }
-        
-        response = await self._http_client.post(url, json=payload)
-        response.raise_for_status()
-        
-        data = response.json()
-        conversation_id = UUID(data["id"])
-        
-        # Update server info with conversation ID
+        conversation_id = await self._create_conversation(
+            server.port, agent_config, workspace_dir
+        )
         server.conversation_id = conversation_id
         await self._save_registry()
-        
         logger.info(f"Started conversation {conversation_id} for group {group_id}")
         return conversation_id
+
+    async def _create_conversation(
+        self, port: int, agent_config: dict, workspace_dir: str | Path
+    ) -> UUID:
+        """Create conversation via API and return its UUID."""
+        url = f"http://127.0.0.1:{port}/api/conversations"
+        payload = {
+            "agent": agent_config,
+            "workspace": {"working_dir": str(workspace_dir)},
+        }
+        response = await self._http_client.post(url, json=payload)
+        response.raise_for_status()
+        return UUID(response.json()["id"])
 
     async def send_message(self, group_id: str, text: str) -> None:
         """Send a message to the conversation for this group."""
         server = self._servers.get(group_id)
         if not server or not server.conversation_id:
             raise ValueError(f"No active conversation for group {group_id}")
-        
+
         url = f"http://127.0.0.1:{server.port}/api/conversations/{server.conversation_id}/messages"
         payload = {
             "role": "user",
             "content": [{"type": "text", "text": text}],
         }
-        
+
         response = await self._http_client.post(url, json=payload)
         response.raise_for_status()
 
@@ -325,7 +300,7 @@ class AgentServerManager:
         server = self._servers.get(group_id)
         if not server or not server.conversation_id:
             raise ValueError(f"No active conversation for group {group_id}")
-        
+
         url = f"http://127.0.0.1:{server.port}/api/conversations/{server.conversation_id}/run"
         response = await self._http_client.post(url)
         response.raise_for_status()
@@ -335,7 +310,7 @@ class AgentServerManager:
         server = self._servers.get(group_id)
         if not server or not server.conversation_id:
             return False
-        
+
         try:
             url = f"http://127.0.0.1:{server.port}/api/conversations/{server.conversation_id}/pause"
             response = await self._http_client.post(url)
@@ -349,7 +324,7 @@ class AgentServerManager:
         server = self._servers.get(group_id)
         if not server or not server.conversation_id:
             return None
-        
+
         try:
             url = f"http://127.0.0.1:{server.port}/api/conversations/{server.conversation_id}"
             response = await self._http_client.get(url)
@@ -364,7 +339,7 @@ class AgentServerManager:
         tasks = []
         for group_id in self._servers:
             tasks.append(self.pause_conversation(group_id))
-        
+
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             paused = sum(1 for r in results if r is True)
@@ -378,12 +353,11 @@ class AgentServerManager:
         """Save server registry to disk."""
         data = {
             "servers": {
-                group_id: server.to_dict()
-                for group_id, server in self._servers.items()
+                group_id: server.to_dict() for group_id, server in self._servers.items()
             },
             "next_port": self._next_port,
         }
-        
+
         # Write atomically
         tmp_path = self.registry_path.with_suffix(".tmp")
         tmp_path.write_text(json.dumps(data, indent=2))
@@ -393,7 +367,7 @@ class AgentServerManager:
         """Load server registry from disk."""
         if not self.registry_path.exists():
             return
-        
+
         try:
             data = json.loads(self.registry_path.read_text())
             self._servers = {
@@ -418,7 +392,7 @@ class AgentServerManager:
 
         for group_id in dead_groups:
             del self._servers[group_id]
-        
+
         if dead_groups:
             await self._save_registry()
 
@@ -428,7 +402,7 @@ class AgentServerManager:
 
     async def terminate_server(self, group_id: str, force: bool = False) -> bool:
         """Terminate a server process.
-        
+
         Args:
             group_id: The group whose server to terminate
             force: If True, use SIGKILL; otherwise SIGTERM
@@ -436,7 +410,7 @@ class AgentServerManager:
         server = self._servers.get(group_id)
         if not server:
             return False
-        
+
         sig = signal.SIGKILL if force else signal.SIGTERM
         try:
             os.kill(server.pid, sig)
