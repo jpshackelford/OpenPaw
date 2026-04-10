@@ -490,3 +490,205 @@ class TestGroupNotFoundResult:
         assert result.success is False
         assert "missing-group" in result.message
         assert "missing-group" in result.error
+
+
+class TestRemoteServerMode:
+    """Tests for remote server mode in ConversationRunner."""
+
+    def test_use_remote_servers_disabled_by_default(self):
+        """Test that use_remote_servers is False by default."""
+        from openpaws.config import Config
+        from openpaws.runner import ConversationRunner
+
+        config = Config()
+        runner = ConversationRunner(config)
+        assert runner.use_remote_servers is False
+
+    def test_use_remote_servers_false_without_manager(self):
+        """Test use_remote_servers is False when config enabled but no manager."""
+        from openpaws.config import Config, RemoteServerConfig
+        from openpaws.runner import ConversationRunner
+
+        config = Config(remote_servers=RemoteServerConfig(enabled=True))
+        runner = ConversationRunner(config)
+        assert runner.use_remote_servers is False
+
+    def test_use_remote_servers_false_when_config_disabled(self):
+        """Test use_remote_servers is False when config disabled with manager."""
+        from unittest.mock import MagicMock
+
+        from openpaws.config import Config, RemoteServerConfig
+        from openpaws.runner import ConversationRunner
+
+        config = Config(remote_servers=RemoteServerConfig(enabled=False))
+        mock_manager = MagicMock()
+        runner = ConversationRunner(config, server_manager=mock_manager)
+        assert runner.use_remote_servers is False
+
+    def test_use_remote_servers_true_when_enabled_and_manager_present(self):
+        """Test use_remote_servers is True when enabled with manager."""
+        from unittest.mock import MagicMock
+
+        from openpaws.config import Config, RemoteServerConfig
+        from openpaws.runner import ConversationRunner
+
+        config = Config(remote_servers=RemoteServerConfig(enabled=True))
+        mock_manager = MagicMock()
+        runner = ConversationRunner(config, server_manager=mock_manager)
+        assert runner.use_remote_servers is True
+
+    def test_server_manager_stored_correctly(self):
+        """Test that server_manager is stored on the runner."""
+        from unittest.mock import MagicMock
+
+        from openpaws.config import Config
+        from openpaws.runner import ConversationRunner
+
+        config = Config()
+        mock_manager = MagicMock()
+        runner = ConversationRunner(config, server_manager=mock_manager)
+        assert runner._server_manager is mock_manager
+
+
+class TestRemoteServerMethods:
+    """Tests for remote server execution methods."""
+
+    @pytest.fixture
+    def runner_with_manager(self, sample_config, temp_base_dir):
+        """Create a runner with a mock server manager."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from openpaws.config import RemoteServerConfig
+
+        sample_config.remote_servers = RemoteServerConfig(enabled=True)
+        mock_manager = MagicMock()
+        mock_manager.get_or_create_server = AsyncMock()
+        mock_manager.start_conversation = AsyncMock()
+        mock_manager.send_message = AsyncMock()
+        mock_manager.run_conversation = AsyncMock()
+        mock_manager.get_conversation_status = AsyncMock()
+        runner = ConversationRunner(
+            sample_config, base_dir=temp_base_dir, server_manager=mock_manager
+        )
+        return runner, mock_manager
+
+    @pytest.mark.asyncio
+    async def test_setup_remote_conversation(self, runner_with_manager, sample_config):
+        """Test _setup_remote_conversation sets up server and returns conv_id."""
+        from unittest.mock import MagicMock
+
+        runner, mock_manager = runner_with_manager
+        mock_server = MagicMock(port=18000)
+        mock_manager.get_or_create_server.return_value = mock_server
+        mock_manager.start_conversation.return_value = "conv-123"
+
+        group = sample_config.groups["main"]
+        conv_id = await runner._setup_remote_conversation(group)
+
+        assert conv_id == "conv-123"
+        mock_manager.get_or_create_server.assert_called_once_with(group.name)
+        mock_manager.start_conversation.assert_called_once()
+
+    def test_handle_remote_error(self, runner_with_manager):
+        """Test _handle_remote_error returns proper ConversationResult."""
+        runner, _ = runner_with_manager
+
+        result = runner._handle_remote_error("test-group", ValueError("test error"))
+
+        assert result.success is False
+        assert "test error" in result.message
+        assert "test error" in result.error
+
+    def test_build_agent_config(self, runner_with_manager):
+        """Test _build_agent_config returns proper config dict."""
+        runner, _ = runner_with_manager
+
+        config = runner._build_agent_config()
+
+        assert "model" in config
+        assert "temperature" in config
+        assert "max_tokens" in config
+        assert "system_prompt" in config
+
+    @pytest.mark.asyncio
+    async def test_check_remote_status_not_found(self, runner_with_manager):
+        """Test _check_remote_status returns error when status is None."""
+        runner, mock_manager = runner_with_manager
+        mock_manager.get_conversation_status.return_value = None
+
+        result = await runner._check_remote_status("test-group")
+
+        assert result == "Conversation not found"
+
+    @pytest.mark.asyncio
+    async def test_check_remote_status_completed(self, runner_with_manager):
+        """Test _check_remote_status returns response when completed."""
+        runner, mock_manager = runner_with_manager
+        mock_manager.get_conversation_status.return_value = "completed"
+
+        result = await runner._check_remote_status("test-group")
+
+        assert "completed" in result.lower() or "not yet implemented" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_check_remote_status_error(self, runner_with_manager):
+        """Test _check_remote_status returns error message on error status."""
+        runner, mock_manager = runner_with_manager
+        mock_manager.get_conversation_status.return_value = "error"
+
+        result = await runner._check_remote_status("test-group")
+
+        assert "error" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_check_remote_status_running(self, runner_with_manager):
+        """Test _check_remote_status returns None when still running."""
+        runner, mock_manager = runner_with_manager
+        mock_manager.get_conversation_status.return_value = "running"
+
+        result = await runner._check_remote_status("test-group")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_remote_response(self, runner_with_manager):
+        """Test _get_remote_response returns placeholder response."""
+        runner, _ = runner_with_manager
+
+        result = await runner._get_remote_response("test-group")
+
+        assert "not yet implemented" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_execute_prompt_remote_success(
+        self, runner_with_manager, sample_config
+    ):
+        """Test _execute_prompt_remote successful flow."""
+        from unittest.mock import MagicMock
+
+        runner, mock_manager = runner_with_manager
+        mock_server = MagicMock(port=18000)
+        mock_manager.get_or_create_server.return_value = mock_server
+        mock_manager.start_conversation.return_value = "conv-123"
+        mock_manager.get_conversation_status.return_value = "completed"
+
+        group = sample_config.groups["main"]
+        result = await runner._execute_prompt_remote(group, "test prompt", None)
+
+        assert result.success is True
+        mock_manager.send_message.assert_called_once()
+        mock_manager.run_conversation.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_execute_prompt_remote_error(
+        self, runner_with_manager, sample_config
+    ):
+        """Test _execute_prompt_remote handles errors."""
+        runner, mock_manager = runner_with_manager
+        mock_manager.get_or_create_server.side_effect = Exception("Connection failed")
+
+        group = sample_config.groups["main"]
+        result = await runner._execute_prompt_remote(group, "test prompt", None)
+
+        assert result.success is False
+        assert "Connection failed" in result.error

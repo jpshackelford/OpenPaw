@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -30,7 +31,10 @@ from openpaws.tools import (
 )
 
 if TYPE_CHECKING:
+    from openpaws.agent_server_manager import AgentServerManager
     from openpaws.scheduler import ScheduledTask
+
+logger = logging.getLogger(__name__)
 
 
 def _register_openpaws_tools() -> None:
@@ -103,6 +107,7 @@ class ConversationRunner:
         config: Config,
         base_dir: Path | None = None,
         queue_callback: QueueCallback | None = None,
+        server_manager: AgentServerManager | None = None,
     ):
         """Initialize the conversation runner.
 
@@ -110,10 +115,14 @@ class ConversationRunner:
             config: OpenPaws configuration
             base_dir: Base directory for OpenPaws data (default: ~/.openpaws)
             queue_callback: Optional callback for queuing follow-up conversations
+            server_manager: Optional AgentServerManager for remote conversation mode.
+                           If provided, conversations run in separate agent-server
+                           processes that survive daemon restarts.
         """
         self.config = config
         self.base_dir = base_dir or Path.home() / ".openpaws"
         self._queue_callback = queue_callback
+        self._server_manager = server_manager
 
         self._llm: LLM | None = None
         # Note: Agent is not cached because it may need different tools per conversation
@@ -122,6 +131,11 @@ class ConversationRunner:
     def set_queue_callback(self, callback: QueueCallback) -> None:
         """Set or update the queue callback after initialization."""
         self._queue_callback = callback
+
+    @property
+    def use_remote_servers(self) -> bool:
+        """Check if remote server mode is enabled."""
+        return self.config.remote_servers.enabled and self._server_manager is not None
 
     @property
     def llm(self) -> LLM:
@@ -295,10 +309,10 @@ class ConversationRunner:
         unregister_send_callback(conv_id)
         unregister_queue_callback(conv_id)
 
-    async def _execute_prompt(
+    async def _execute_prompt_local(
         self, group: GroupConfig, prompt: str, conversation_id, callbacks, send_callback
     ) -> ConversationResult:
-        """Execute the prompt with callback registration and cleanup."""
+        """Execute the prompt locally with callback registration and cleanup."""
         events: list[Event] = []
         conv = None
         try:
@@ -311,6 +325,88 @@ class ConversationRunner:
         finally:
             if conv:
                 self._unregister_callbacks(conv)
+
+    async def _execute_prompt_remote(
+        self, group: GroupConfig, prompt: str, send_callback: SendCallback | None
+    ) -> ConversationResult:
+        """Execute the prompt via remote agent-server."""
+        try:
+            await self._setup_remote_conversation(group)
+            await self._server_manager.send_message(group.name, prompt)
+            await self._server_manager.run_conversation(group.name)
+            response = await self._wait_for_remote_completion(group.name, send_callback)
+            return ConversationResult(success=True, message=response)
+        except Exception as e:
+            return self._handle_remote_error(group.name, e)
+
+    async def _setup_remote_conversation(self, group: GroupConfig) -> str:
+        """Set up a remote conversation on agent-server."""
+        server = await self._server_manager.get_or_create_server(group.name)
+        logger.info(f"Using agent-server on port {server.port} for {group.name}")
+        workspace = self._get_group_workspace(group)
+        agent_config = self._build_agent_config()
+        conv_id = await self._server_manager.start_conversation(
+            group_id=group.name, agent_config=agent_config, workspace=workspace
+        )
+        logger.info(f"Remote conversation {conv_id} for {group.name}")
+        return conv_id
+
+    def _handle_remote_error(
+        self, group_name: str, error: Exception
+    ) -> ConversationResult:
+        """Handle errors from remote conversation execution."""
+        logger.exception(f"Remote conversation error for {group_name}: {error}")
+        return ConversationResult(
+            success=False,
+            message=f"Remote conversation failed: {error}",
+            error=str(error),
+        )
+
+    def _build_agent_config(self) -> dict:
+        """Build agent configuration dict for remote server."""
+        return {
+            "model": self._get_model(),
+            "base_url": self._get_base_url(),
+            "api_key": self._get_api_key(self._get_model()),
+            "temperature": self.config.agent.temperature,
+            "max_tokens": self.config.agent.max_tokens,
+            "system_prompt": self._build_custom_instructions(),
+        }
+
+    async def _wait_for_remote_completion(
+        self, group_id: str, send_callback: SendCallback | None
+    ) -> str:
+        """Wait for remote conversation to complete and return the response."""
+        import asyncio
+
+        max_wait, poll_interval = 600, 2  # 10 minutes max, 2 second poll
+        for _ in range(max_wait // poll_interval):
+            result = await self._check_remote_status(group_id)
+            if result is not None:
+                return result
+            await asyncio.sleep(poll_interval)
+        return "Conversation timed out waiting for completion"
+
+    async def _check_remote_status(self, group_id: str) -> str | None:
+        """Check remote conversation status and return result if complete."""
+        status = await self._server_manager.get_conversation_status(group_id)
+        if status is None:
+            return "Conversation not found"
+        if status in ("completed", "finished", "idle"):
+            return await self._get_remote_response(group_id)
+        if status == "error":
+            return "Conversation encountered an error"
+        return None
+
+    async def _get_remote_response(self, group_id: str) -> str:
+        """Get the final response from a remote conversation.
+
+        Fetches the conversation events and extracts the final response.
+        """
+        # For now, return a placeholder - full implementation would fetch
+        # events from the server and extract the response
+        # This requires the agent-server to expose an events endpoint
+        return "Remote conversation completed (response extraction not yet implemented)"
 
     async def run_prompt(
         self,
@@ -325,7 +421,12 @@ class ConversationRunner:
         group = self.config.groups.get(group_name)
         if not group:
             return self._group_not_found_result(group_name)
-        return await self._execute_prompt(
+
+        # Use remote servers if enabled
+        if self.use_remote_servers:
+            return await self._execute_prompt_remote(group, prompt, send_callback)
+
+        return await self._execute_prompt_local(
             group, prompt, conversation_id, callbacks, send_callback
         )
 
