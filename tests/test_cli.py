@@ -562,3 +562,77 @@ class TestCampfireSetupHelpers:
         result = []
         assert _handle_prompt_char("\x7f", result, echo=False) is False
         assert result == []
+
+
+class TestQueueCommands:
+    """Tests for queue CLI commands."""
+
+    def test_queue_list_empty(self, runner, isolated_env):
+        """Test queue list with empty queue."""
+        result = runner.invoke(main, ["queue", "list"])
+        assert result.exit_code == 0
+        assert "empty" in result.output.lower()
+
+    def test_queue_stats_empty(self, runner, isolated_env):
+        """Test queue stats with empty queue."""
+        result = runner.invoke(main, ["queue", "stats"])
+        assert result.exit_code == 0
+        assert "Pending:" in result.output
+        assert "0" in result.output
+
+    def test_queue_add_requires_group(self, runner, isolated_env):
+        """Test queue add without group fails."""
+        result = runner.invoke(main, ["queue", "add", "Test prompt"])
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_queue_add_invalid_group(self, runner, config_file, isolated_env):
+        """Test queue add with invalid group shows error."""
+        args = ["queue", "add", "Test prompt", "-g", "nonexistent"]
+        result = runner.invoke(main, args)
+        assert result.exit_code == 1
+        assert "not found" in result.output.lower()
+
+    def test_queue_add_valid_group(self, runner, config_file, isolated_env):
+        """Test queue add with valid group succeeds."""
+        result = runner.invoke(main, ["queue", "add", "Test prompt", "-g", "main"])
+        assert result.exit_code == 0
+        assert "Queued" in result.output
+
+    def test_queue_list_shows_added_item(self, runner, config_file, isolated_env):
+        """Test queue list shows added item."""
+        runner.invoke(main, ["queue", "add", "Test prompt", "-g", "main"])
+        result = runner.invoke(main, ["queue", "list"])
+        assert result.exit_code == 0
+        assert "Test prompt" in result.output or "pending" in result.output.lower()
+
+    def test_queue_stats_counts_items(self, runner, config_file, isolated_env):
+        """Test queue stats counts items correctly."""
+        runner.invoke(main, ["queue", "add", "Test 1", "-g", "main"])
+        runner.invoke(main, ["queue", "add", "Test 2", "-g", "main"])
+        result = runner.invoke(main, ["queue", "stats"])
+        assert result.exit_code == 0
+        assert "Pending:" in result.output
+        # Should show 2 pending
+        assert "2" in result.output
+
+    def test_queue_clear_completed(self, runner, config_file, isolated_env):
+        """Test queue clear with default status."""
+        result = runner.invoke(main, ["queue", "clear", "-y"])
+        assert result.exit_code == 0
+        assert "Deleted" in result.output
+
+    def test_queue_clear_all_requires_confirmation(
+        self, runner, config_file, isolated_env
+    ):
+        """Test queue clear all prompts for confirmation."""
+        result = runner.invoke(main, ["queue", "clear", "-s", "all"])
+        # Without -y, should prompt and abort on empty stdin
+        assert "Aborted" in result.output or result.exit_code == 1
+
+    def test_queue_clear_all_with_yes(self, runner, config_file, isolated_env):
+        """Test queue clear all with -y flag."""
+        runner.invoke(main, ["queue", "add", "Test", "-g", "main"])
+        result = runner.invoke(main, ["queue", "clear", "-s", "all", "-y"])
+        assert result.exit_code == 0
+        assert "Deleted" in result.output

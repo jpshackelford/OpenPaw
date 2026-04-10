@@ -87,19 +87,24 @@ See `docs/CAMPFIRE_SETUP.md` for detailed configuration instructions.
 
 ```
 src/openpaws/
-├── __init__.py      # Package version
-├── __main__.py      # Entry point for `python -m openpaws`
-├── cli.py           # Click CLI commands (start, stop, status, tasks)
-├── config.py        # YAML config parsing with env var expansion
-├── daemon.py        # Daemon process management (PID file, signals, logging)
-├── runner.py        # Conversation runner (integrates with software-agent-sdk)
-├── scheduler.py     # Cron-based task scheduling (with storage integration)
-├── storage.py       # SQLite state persistence for tasks and sessions
-└── channels/        # Chat platform adapters
+├── __init__.py        # Package version
+├── __main__.py        # Entry point for `python -m openpaws`
+├── cli.py             # Click CLI commands (start, stop, status, tasks, queue)
+├── config.py          # YAML config parsing with env var expansion
+├── daemon.py          # Daemon process management (PID file, signals, logging)
+├── queue_manager.py   # Queue manager for multi-conversation orchestration
+├── runner.py          # Conversation runner (integrates with software-agent-sdk)
+├── scheduler.py       # Cron-based task scheduling (with storage integration)
+├── storage.py         # SQLite state persistence for tasks, sessions, and queue
+├── channels/          # Chat platform adapters
+│   ├── __init__.py
+│   ├── base.py        # Abstract ChannelAdapter interface
+│   ├── campfire.py    # Campfire adapter (webhook-based)
+│   └── slack.py       # Slack adapter (Socket Mode)
+└── tools/             # Custom agent tools
     ├── __init__.py
-    ├── base.py      # Abstract ChannelAdapter interface
-    ├── campfire.py  # Campfire adapter (webhook-based)
-    └── slack.py     # Slack adapter (Socket Mode)
+    ├── queue_next.py  # QueueNextTool for agent queue access
+    └── send_status.py # SendStatusTool for status updates
 
 scripts/
 ├── check_coverage.py          # Coverage reporting helper
@@ -108,15 +113,17 @@ scripts/
 └── setup_campfire_openpaw.py  # Campfire + OpenPaws installation script
 
 tests/
-├── conftest.py              # Pytest config, subprocess coverage setup
-├── test_campfire_adapter.py # Campfire adapter tests
-├── test_config.py           # Config parsing tests
-├── test_daemon.py           # Unit tests for daemon module
-├── test_daemon_integration.py  # Integration tests (real process start/stop)
-├── test_runner.py           # Conversation runner tests
-├── test_scheduler.py        # Scheduler unit tests
-├── test_slack_adapter.py    # Slack adapter tests
-└── test_storage.py          # SQLite storage tests
+├── conftest.py                # Pytest config, subprocess coverage setup
+├── test_campfire_adapter.py   # Campfire adapter tests
+├── test_config.py             # Config parsing tests
+├── test_daemon.py             # Unit tests for daemon module
+├── test_daemon_integration.py # Integration tests (real process start/stop)
+├── test_queue_manager.py      # Queue manager tests
+├── test_queue_next_tool.py    # QueueNextTool tests
+├── test_runner.py             # Conversation runner tests
+├── test_scheduler.py          # Scheduler unit tests
+├── test_slack_adapter.py      # Slack adapter tests
+└── test_storage.py            # SQLite storage tests (including queue)
 ```
 
 ## Development Commands
@@ -272,9 +279,40 @@ tasks:
     schedule: "0 8 * * *"  # Cron syntax
     group: main
     prompt: "Summarize top AI news"
+
+queue:
+  enabled: true             # Enable queue dispatch (default: true)
+  heartbeat_interval: 300   # Seconds between queue processing (default: 300)
+  max_dispatch: 5           # Max items per heartbeat (default: 5)
 ```
 
 See [docs/SLACK_SETUP.md](docs/SLACK_SETUP.md) for complete Slack setup instructions.
+
+### Queue Dispatch
+
+OpenPaws supports multi-conversation orchestration through a queue-based dispatch system.
+Agents can queue follow-up conversations using the `QueueNextTool`, and the daemon
+processes queued items at configured intervals (heartbeat).
+
+**CLI Commands:**
+```bash
+openpaws queue list              # List queued conversations
+openpaws queue stats             # Show queue statistics
+openpaws queue add "prompt" -g main  # Manually queue a conversation
+openpaws queue clear -s completed    # Clear completed items
+```
+
+**How it works:**
+1. During a conversation, the agent can use `queue_next` tool to schedule follow-ups
+2. Items are stored in SQLite with priority and context
+3. The heartbeat loop processes pending items at configured intervals
+4. Each item becomes a new conversation with the specified group
+
+**Example agent usage:**
+```
+The agent uses queue_next(prompt="Validate changes", group_name="main", 
+                          context={"pr_url": "..."}, priority=5)
+```
 
 ## Testing Guidelines
 

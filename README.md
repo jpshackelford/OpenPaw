@@ -11,6 +11,7 @@ OpenPaws turns the OpenHands SDK from "run an agent when I call it" into "have a
 **Features:**
 - 📅 **Scheduled Tasks** - Cron-based recurring tasks that post results to chat
 - 💬 **Chat Connectors** - Multiple platform adapters (see below)
+- 🔄 **Queue Dispatch** - Multi-conversation workflows with priority and context
 - 🔒 **Sandboxed Execution** - Runs agents in isolated environments
 - ⚡ **Minimal Config** - YAML config + small CLI
 
@@ -84,6 +85,11 @@ openpaws status             # Show status
 openpaws tasks list         # List scheduled tasks
 openpaws tasks run <name>   # Run a task now
 
+openpaws queue list         # List queued conversations
+openpaws queue stats        # Show queue statistics
+openpaws queue add "prompt" -g main  # Manually queue a conversation
+openpaws queue clear -s completed    # Clear completed items
+
 openpaws logs               # View logs
 ```
 
@@ -120,7 +126,27 @@ tasks:
 
 agent:
   model: anthropic/claude-sonnet-4-20250514
+
+queue:
+  enabled: true             # Enable queue dispatch (default: true)
+  heartbeat_interval: 300   # Seconds between processing (default: 300)
+  max_dispatch: 5           # Max items per heartbeat (default: 5)
 ```
+
+### Queue Dispatch
+
+Queue dispatch enables multi-conversation workflows where agents can schedule follow-up conversations. During execution, the agent can use the `queue_next` tool to queue additional work:
+
+```
+Agent uses: queue_next(prompt="Validate deployment", group_name="ops", 
+                       context={"pr_url": "..."}, priority=5)
+```
+
+The daemon processes queued items at the configured heartbeat interval, creating new conversations for each item. This enables:
+- **Multi-step workflows** that span multiple agent conversations
+- **Rate limiting** - controlled pacing to avoid API limits
+- **Priority processing** - higher priority items run first
+- **Context preservation** - pass data between conversations
 
 ### Conversation Context (Campfire)
 

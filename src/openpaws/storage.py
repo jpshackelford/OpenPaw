@@ -3,15 +3,18 @@
 This module provides persistent storage for:
 - Task state (next_run, last_run, status, last_result)
 - Conversation sessions (for resume capability)
+- Queue items for multi-conversation orchestration
 
 Database location: ~/.openpaws/state.db (or $OPENPAWS_DIR/state.db)
 """
 
+import json
 import os
 import sqlite3
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -53,6 +56,24 @@ CREATE TABLE IF NOT EXISTS sessions (
     updated_at TEXT,
     state BLOB
 );
+
+CREATE TABLE IF NOT EXISTS queue (
+    id TEXT PRIMARY KEY,
+    prompt TEXT NOT NULL,
+    context TEXT,
+    group_name TEXT NOT NULL,
+    priority INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'pending',
+    created_at TEXT NOT NULL,
+    processed_at TEXT,
+    result TEXT,
+    error TEXT,
+    parent_conversation_id TEXT,
+    workflow_id TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_queue_status_priority 
+    ON queue(status, priority DESC, created_at ASC);
 """
 
 
@@ -79,6 +100,47 @@ class SessionState:
     created_at: datetime
     updated_at: datetime
     state: bytes | None = None
+
+
+@dataclass
+class QueueItem:
+    """A queued conversation for multi-conversation orchestration."""
+
+    id: str
+    prompt: str
+    group_name: str
+    priority: int = 0
+    status: str = "pending"  # pending, processing, completed, failed
+    created_at: datetime = field(default_factory=datetime.now)
+    processed_at: datetime | None = None
+    result: str | None = None
+    error: str | None = None
+    context: dict | None = None
+    parent_conversation_id: str | None = None
+    workflow_id: str | None = None
+
+    @classmethod
+    def create(
+        cls,
+        prompt: str,
+        group_name: str,
+        *,
+        context: dict | None = None,
+        priority: int = 0,
+        parent_conversation_id: str | None = None,
+        workflow_id: str | None = None,
+    ) -> "QueueItem":
+        """Create a new queue item with generated ID."""
+        return cls(
+            id=str(uuid.uuid4()),
+            prompt=prompt,
+            group_name=group_name,
+            context=context,
+            priority=priority,
+            parent_conversation_id=parent_conversation_id,
+            workflow_id=workflow_id,
+            created_at=datetime.now(),
+        )
 
 
 def _datetime_to_str(dt: datetime | None) -> str | None:
@@ -269,3 +331,157 @@ class Storage:
             if row is None:
                 return None
             return self._row_to_session(row)
+
+    # Queue persistence methods
+
+    _INSERT_QUEUE_SQL = """
+        INSERT INTO queue
+            (id, prompt, context, group_name, priority, status,
+             created_at, processed_at, result, error,
+             parent_conversation_id, workflow_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    def _queue_item_to_row(self, item: QueueItem) -> tuple:  # length-ok
+        """Convert QueueItem to a tuple for SQL insertion."""
+        return (
+            item.id,
+            item.prompt,
+            json.dumps(item.context) if item.context else None,
+            item.group_name,
+            item.priority,
+            item.status,
+            _datetime_to_str(item.created_at),
+            _datetime_to_str(item.processed_at),
+            item.result,
+            item.error,
+            item.parent_conversation_id,
+            item.workflow_id,
+        )
+
+    def _row_to_queue_item(self, row: sqlite3.Row) -> QueueItem:  # length-ok
+        """Convert a database row to QueueItem."""
+        context = row["context"]
+        return QueueItem(
+            id=row["id"],
+            prompt=row["prompt"],
+            context=json.loads(context) if context else None,
+            group_name=row["group_name"],
+            priority=row["priority"],
+            status=row["status"],
+            created_at=_str_to_datetime(row["created_at"]),
+            processed_at=_str_to_datetime(row["processed_at"]),
+            result=row["result"],
+            error=row["error"],
+            parent_conversation_id=row["parent_conversation_id"],
+            workflow_id=row["workflow_id"],
+        )
+
+    def enqueue(self, item: QueueItem) -> str:
+        """Add a queue item. Returns the item ID."""
+        with self._connection() as conn:
+            conn.execute(self._INSERT_QUEUE_SQL, self._queue_item_to_row(item))
+        return item.id
+
+    def dequeue(self, max_items: int = 1) -> list[QueueItem]:
+        """Fetch pending items and mark as processing.
+
+        Items are ordered by priority (descending) then created_at (ascending).
+        """
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM queue
+                WHERE status = 'pending'
+                ORDER BY priority DESC, created_at ASC
+                LIMIT ?
+                """,
+                (max_items,),
+            ).fetchall()
+
+            items = [self._row_to_queue_item(row) for row in rows]
+
+            # Mark as processing
+            for item in items:
+                conn.execute(
+                    "UPDATE queue SET status = 'processing' WHERE id = ?",
+                    (item.id,),
+                )
+                item.status = "processing"
+
+        return items
+
+    def complete_queue_item(self, item_id: str, result: str) -> bool:
+        """Mark a queue item as completed. Returns True if updated."""
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE queue 
+                SET status = 'completed', result = ?, processed_at = ?
+                WHERE id = ?
+                """,
+                (result, _datetime_to_str(datetime.now()), item_id),
+            )
+            return cursor.rowcount > 0
+
+    def fail_queue_item(self, item_id: str, error: str) -> bool:
+        """Mark a queue item as failed. Returns True if updated."""
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE queue 
+                SET status = 'failed', error = ?, processed_at = ?
+                WHERE id = ?
+                """,
+                (error, _datetime_to_str(datetime.now()), item_id),
+            )
+            return cursor.rowcount > 0
+
+    def load_queue_item(self, item_id: str) -> QueueItem | None:
+        """Load a queue item by ID."""
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM queue WHERE id = ?", (item_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            return self._row_to_queue_item(row)
+
+    def list_queue(  # length-ok: SQL query building requires steps
+        self, status: str | None = None, limit: int | None = None
+    ) -> list[QueueItem]:
+        """List queue items, optionally filtered by status."""
+        order = "ORDER BY priority DESC, created_at ASC"
+        with self._connection() as conn:
+            if status:
+                query = f"SELECT * FROM queue WHERE status = ? {order}"
+                if limit:
+                    query += f" LIMIT {limit}"
+                rows = conn.execute(query, (status,)).fetchall()
+            else:
+                query = f"SELECT * FROM queue {order}"
+                if limit:
+                    query += f" LIMIT {limit}"
+                rows = conn.execute(query).fetchall()
+            return [self._row_to_queue_item(row) for row in rows]
+
+    def clear_queue(self, status: str | None = None) -> int:
+        """Clear queue items, optionally filtered by status. Returns count deleted."""
+        with self._connection() as conn:
+            if status:
+                cursor = conn.execute("DELETE FROM queue WHERE status = ?", (status,))
+            else:
+                cursor = conn.execute("DELETE FROM queue")
+            return cursor.rowcount
+
+    def get_queue_stats(self) -> dict[str, int]:
+        """Get queue statistics by status."""
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT status, COUNT(*) as count
+                FROM queue
+                GROUP BY status
+                """
+            ).fetchall()
+            return {row["status"]: row["count"] for row in rows}

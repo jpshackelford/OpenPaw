@@ -31,6 +31,7 @@ from openpaws.channels.campfire import CampfireAdapter, CampfireConfig
 from openpaws.channels.gmail import GmailAdapter, GmailConfig
 from openpaws.channels.slack import SlackAdapter, SlackConfig
 from openpaws.config import Config, load_config
+from openpaws.queue_manager import QueueManager
 from openpaws.runner import ConversationRunner
 from openpaws.scheduler import Scheduler
 from openpaws.storage import Storage
@@ -320,6 +321,13 @@ class Daemon:
         self._channel_adapters: list[ChannelAdapter] = []
         self._channel_adapters_by_type: dict[str, ChannelAdapter] = {}
         self._runner: ConversationRunner | None = None
+        self._queue_manager: QueueManager | None = None
+        self._heartbeat_task: asyncio.Task | None = None
+
+    @property
+    def queue_manager(self) -> QueueManager | None:
+        """Get the queue manager instance."""
+        return self._queue_manager
 
     def _setup_signal_handlers(self) -> None:
         """Setup signal handlers for graceful shutdown."""
@@ -389,6 +397,7 @@ class Daemon:
 
     def _setup_runner(self) -> None:
         """Initialize the conversation runner."""
+        # Queue callback is set up later in _setup_queue_manager
         self._runner = ConversationRunner(self.config)
         logger.info("Conversation runner initialized")
 
@@ -401,6 +410,64 @@ class Daemon:
                 continue
             self.scheduler.add_task(task_config)
             logger.info(f"Scheduled task: {task_config.name}")
+
+    async def _queue_callback(
+        self,
+        prompt: str,
+        group_name: str,
+        context: dict | None,
+        priority: int,
+        workflow_id: str | None,
+    ) -> str:
+        """Queue a follow-up conversation. Used as callback for QueueNextTool."""
+        if not self._queue_manager:
+            raise RuntimeError("Queue manager not initialized")
+        return await self._queue_manager.enqueue(
+            prompt=prompt,
+            group_name=group_name,
+            context=context,
+            priority=priority,
+            workflow_id=workflow_id,
+        )
+
+    def _setup_queue_manager(self) -> None:  # length-ok
+        """Initialize queue manager for multi-conversation orchestration."""
+        if not self.config.queue.enabled:
+            logger.info("Queue dispatch disabled in config")
+            return
+        self._runner.set_queue_callback(self._queue_callback)
+        self._queue_manager = QueueManager(
+            storage=self.storage,
+            runner=self._runner,
+            config=self.config.queue,
+        )
+        interval = self.config.queue.heartbeat_interval
+        max_d = self.config.queue.max_dispatch
+        logger.info(f"Queue manager: interval={interval}s, max_dispatch={max_d}")
+
+    async def _process_queue_batch(self) -> None:  # length-ok
+        """Process one batch and log results."""
+        if self._shutdown_event and self._shutdown_event.is_set():
+            return
+        processed = await self._queue_manager.process_batch()
+        if processed > 0:
+            logger.info(f"Heartbeat: processed {processed} queued item(s)")
+
+    async def _heartbeat_loop(self) -> None:  # length-ok
+        """Process queued conversations at configured interval."""
+        if not self._queue_manager:
+            return
+        interval = self.config.queue.heartbeat_interval
+        logger.info(f"Starting heartbeat loop with {interval}s interval")
+        while True:
+            try:
+                await self._process_queue_batch()
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                logger.info("Heartbeat loop cancelled")
+                break
+            except Exception as e:
+                logger.exception(f"Error in heartbeat loop: {e}")
 
     def _find_group_for_message(self, message: IncomingMessage) -> str | None:
         """Find the group name that matches the incoming message."""
@@ -583,6 +650,7 @@ class Daemon:
 
     async def _shutdown(self) -> None:
         """Perform graceful shutdown of all components."""
+        self._stop_heartbeat()
         await self._stop_channel_adapters()
         if self.scheduler:
             self.scheduler.stop()
@@ -598,7 +666,20 @@ class Daemon:
         self._setup_storage()
         self._setup_runner()
         self._setup_scheduler()
+        self._setup_queue_manager()
         self._setup_channel_adapters()
+
+    def _start_heartbeat_if_enabled(self) -> None:
+        """Start the heartbeat loop if queue manager is enabled."""
+        if self._queue_manager:
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+            logger.info("Heartbeat task started")
+
+    def _stop_heartbeat(self) -> None:
+        """Stop the heartbeat loop if running."""
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            logger.info("Heartbeat task cancelled")
 
     async def run(self) -> None:
         """Main daemon run loop."""
@@ -607,6 +688,7 @@ class Daemon:
         self._log_startup_info()
 
         self.scheduler.start(self._execute_task)
+        self._start_heartbeat_if_enabled()
         await self._start_channel_adapters()
         await self._shutdown_event.wait()
         await self._shutdown()

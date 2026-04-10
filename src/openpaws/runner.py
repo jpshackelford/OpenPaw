@@ -21,8 +21,11 @@ from pydantic import SecretStr
 
 from openpaws.config import Config, GroupConfig
 from openpaws.tools import (
+    QueueNextTool,
     SendStatusTool,
+    register_queue_callback,
     register_send_callback,
+    unregister_queue_callback,
     unregister_send_callback,
 )
 
@@ -34,12 +37,12 @@ def _register_openpaws_tools() -> None:
     """Register OpenPaws custom tools with the SDK."""
     from openhands.sdk.tool import register_tool
 
-    # Register SendStatusTool if not already registered
-    try:
-        register_tool(SendStatusTool.name, SendStatusTool)
-    except ValueError:
-        # Already registered
-        pass
+    # Register tools if not already registered
+    for tool_cls in [SendStatusTool, QueueNextTool]:
+        try:
+            register_tool(tool_cls.name, tool_cls)
+        except ValueError:
+            pass  # Already registered
 
 
 # Register tools at module load time
@@ -47,6 +50,8 @@ _register_openpaws_tools()
 
 # Type for status message callback
 SendCallback = Callable[[str], Awaitable[None]]
+# Type for queue callback
+QueueCallback = Callable[[str, str, dict | None, int, str | None], Awaitable[str]]
 
 # Instructions for the agent on handling immediate vs. deferred responses
 CHAT_RESPONSE_INSTRUCTIONS = """
@@ -97,19 +102,26 @@ class ConversationRunner:
         self,
         config: Config,
         base_dir: Path | None = None,
+        queue_callback: QueueCallback | None = None,
     ):
         """Initialize the conversation runner.
 
         Args:
             config: OpenPaws configuration
             base_dir: Base directory for OpenPaws data (default: ~/.openpaws)
+            queue_callback: Optional callback for queuing follow-up conversations
         """
         self.config = config
         self.base_dir = base_dir or Path.home() / ".openpaws"
+        self._queue_callback = queue_callback
 
         self._llm: LLM | None = None
         # Note: Agent is not cached because it may need different tools per conversation
         # (e.g., different send_callback for different channels)
+
+    def set_queue_callback(self, callback: QueueCallback) -> None:
+        """Set or update the queue callback after initialization."""
+        self._queue_callback = callback
 
     @property
     def llm(self) -> LLM:
@@ -269,10 +281,19 @@ class ConversationRunner:
             error=str(e),
         )
 
-    def _register_callback(self, conv, send_callback: SendCallback | None) -> None:
-        """Register send callback if provided."""
+    def _register_callbacks(self, conv, send_callback: SendCallback | None) -> None:
+        """Register tool callbacks for this conversation."""
+        conv_id = str(conv.state.id)
         if send_callback:
-            register_send_callback(str(conv.state.id), send_callback)
+            register_send_callback(conv_id, send_callback)
+        if self._queue_callback:
+            register_queue_callback(conv_id, self._queue_callback)
+
+    def _unregister_callbacks(self, conv) -> None:
+        """Unregister tool callbacks for this conversation."""
+        conv_id = str(conv.state.id)
+        unregister_send_callback(conv_id)
+        unregister_queue_callback(conv_id)
 
     async def _execute_prompt(
         self, group: GroupConfig, prompt: str, conversation_id, callbacks, send_callback
@@ -283,13 +304,13 @@ class ConversationRunner:
         try:
             cbs = self._build_callbacks(events, callbacks)
             conv = self._create_conversation(group, conversation_id, cbs)
-            self._register_callback(conv, send_callback)
+            self._register_callbacks(conv, send_callback)
             return self._run_conversation(conv, prompt, events)
         except Exception as e:
             return self._conversation_error(e, events)
         finally:
             if conv:
-                unregister_send_callback(str(conv.state.id))
+                self._unregister_callbacks(conv)
 
     async def run_prompt(
         self,
