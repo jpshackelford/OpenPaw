@@ -18,6 +18,7 @@ class TestCallbackRegistry:
 
     def test_register_and_get_callback(self):
         """Test registering and retrieving a callback."""
+
         async def callback(prompt, group_name, context, priority, workflow_id):
             return "test-id"
 
@@ -29,6 +30,7 @@ class TestCallbackRegistry:
 
     def test_unregister_callback(self):
         """Test unregistering a callback."""
+
         async def callback(prompt, group_name, context, priority, workflow_id):
             return "test-id"
 
@@ -130,6 +132,7 @@ class TestQueueNextExecutor:
     @pytest.mark.asyncio
     async def test_executor_with_callback(self):
         """Test executor with registered callback."""
+
         async def callback(prompt, group_name, context, priority, workflow_id):
             return f"item-{prompt[:4]}"
 

@@ -447,33 +447,28 @@ class Storage:
                 return None
             return self._row_to_queue_item(row)
 
-    def list_queue(self, status: str | None = None) -> list[QueueItem]:
+    def list_queue(
+        self, status: str | None = None, limit: int | None = None
+    ) -> list[QueueItem]:
         """List queue items, optionally filtered by status."""
         with self._connection() as conn:
             if status:
-                rows = conn.execute(
-                    """
-                    SELECT * FROM queue WHERE status = ?
-                    ORDER BY priority DESC, created_at ASC
-                    """,
-                    (status,),
-                ).fetchall()
+                query = "SELECT * FROM queue WHERE status = ? ORDER BY priority DESC, created_at ASC"
+                if limit:
+                    query += f" LIMIT {limit}"
+                rows = conn.execute(query, (status,)).fetchall()
             else:
-                rows = conn.execute(
-                    """
-                    SELECT * FROM queue
-                    ORDER BY priority DESC, created_at ASC
-                    """
-                ).fetchall()
+                query = "SELECT * FROM queue ORDER BY priority DESC, created_at ASC"
+                if limit:
+                    query += f" LIMIT {limit}"
+                rows = conn.execute(query).fetchall()
             return [self._row_to_queue_item(row) for row in rows]
 
     def clear_queue(self, status: str | None = None) -> int:
         """Clear queue items, optionally filtered by status. Returns count deleted."""
         with self._connection() as conn:
             if status:
-                cursor = conn.execute(
-                    "DELETE FROM queue WHERE status = ?", (status,)
-                )
+                cursor = conn.execute("DELETE FROM queue WHERE status = ?", (status,))
             else:
                 cursor = conn.execute("DELETE FROM queue")
             return cursor.rowcount

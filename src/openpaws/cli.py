@@ -518,7 +518,8 @@ def _clear_queue_by_status(storage: Storage, status: str, yes: bool) -> int:
 
 @queue.command("clear")
 @click.option(
-    "--status", "-s",
+    "--status",
+    "-s",
     type=click.Choice(["completed", "failed", "all"]),
     default="completed",
     help="Status to clear (default: completed)",

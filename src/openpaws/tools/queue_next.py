@@ -49,9 +49,7 @@ def get_queue_callback(conversation_id: str) -> QueueCallback | None:
 class QueueNextAction(Action):
     """Action for queuing a follow-up conversation."""
 
-    prompt: str = Field(
-        description="The prompt for the follow-up conversation"
-    )
+    prompt: str = Field(description="The prompt for the follow-up conversation")
     group_name: str = Field(
         description="The group to run the follow-up conversation in"
     )
@@ -88,9 +86,7 @@ class QueueNextObservation(Observation):
     queued: bool = Field(
         default=True, description="Whether the conversation was queued"
     )
-    item_id: str | None = Field(
-        default=None, description="The ID of the queued item"
-    )
+    item_id: str | None = Field(default=None, description="The ID of the queued item")
 
     @property
     def visualize(self) -> Text:
