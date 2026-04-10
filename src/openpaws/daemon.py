@@ -720,9 +720,7 @@ class Daemon:
                 await self._agent_server_manager.startup()
                 logger.info("AgentServerManager started")
             except Exception as e:
-                logger.error(
-                    f"Failed to start AgentServerManager: {e}", exc_info=True
-                )
+                logger.error(f"Failed to start AgentServerManager: {e}", exc_info=True)
                 logger.warning(
                     "Continuing without remote servers (falling back to local mode)"
                 )
