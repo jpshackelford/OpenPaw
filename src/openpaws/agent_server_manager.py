@@ -186,24 +186,21 @@ class AgentServerManager:
         await self._wait_for_server_ready(port)
         return ServerInfo(pid=process.pid, port=port, group_id=group_id)
 
+    def _get_server_log_handle(self, port: int):
+        """Get file handle for server log output."""
+        log_dir = self.base_dir / "logs" / "servers"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        return open(log_dir / f"agent-server-{port}.log", "a")
+
     def _start_server_process(self, port: int) -> subprocess.Popen:
         """Start agent-server subprocess on given port."""
         cmd = ["agent-server", "--host", "127.0.0.1", "--port", str(port)]
         env = os.environ.copy()
         env["OPENHANDS_CONVERSATIONS_DIR"] = str(self.conversations_dir)
-
-        # Redirect output to log file for debugging
-        log_dir = self.base_dir / "logs" / "servers"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / f"agent-server-{port}.log"
-        log_handle = open(log_file, "a")
-
+        log_handle = self._get_server_log_handle(port)
         return subprocess.Popen(
-            cmd,
-            env=env,
-            start_new_session=True,
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
+            cmd, env=env, start_new_session=True,
+            stdout=log_handle, stderr=subprocess.STDOUT,
         )
 
     def _is_port_available(self, port: int) -> bool:
@@ -233,47 +230,51 @@ class AgentServerManager:
             f"No available ports in range {self.port_start}-{self.port_end}"
         )
 
+    async def _check_server_health(self, port: int) -> bool:
+        """Check if server health endpoint responds OK."""
+        try:
+            resp = await self._http_client.get(f"http://127.0.0.1:{port}/health")
+            return resp.status_code == 200
+        except httpx.ConnectError:
+            return False
+
     async def _wait_for_server_ready(
         self, port: int, timeout: float = 30.0, interval: float = 0.5
     ) -> None:
         """Wait for server to be ready to accept connections."""
-        url = f"http://127.0.0.1:{port}/health"
         deadline = asyncio.get_event_loop().time() + timeout
         attempt = 0
-
         while asyncio.get_event_loop().time() < deadline:
-            try:
-                response = await self._http_client.get(url)
-                if response.status_code == 200:
-                    logger.debug(f"Server on port {port} is ready after {attempt} attempts")
-                    return
-            except httpx.ConnectError as e:
-                attempt += 1
-                if attempt % 10 == 0:  # Log every ~5 seconds
-                    logger.debug(f"Waiting for server on port {port} (attempt {attempt}): {e}")
+            if await self._check_server_health(port):
+                logger.debug(f"Server on port {port} ready after {attempt} tries")
+                return
+            attempt += 1
+            if attempt % 10 == 0:
+                logger.debug(f"Waiting for server on port {port} ({attempt} tries)")
             await asyncio.sleep(interval)
+        raise TimeoutError(f"Server on port {port} not ready in {timeout}s")
 
-        raise TimeoutError(f"Server on port {port} did not become ready in {timeout}s")
-
-    async def _is_server_healthy(self, server: ServerInfo) -> bool:
-        """Check if server is running and healthy."""
-        # First check if process is running
+    def _is_process_running(self, pid: int) -> bool:
+        """Check if a process with given PID is running."""
         try:
-            os.kill(server.pid, 0)  # Signal 0 = check if process exists
+            os.kill(pid, 0)
+            return True
         except OSError:
             return False
 
-        # Then check HTTP health
+    async def _is_server_healthy(self, server: ServerInfo) -> bool:
+        """Check if server is running and healthy."""
+        if not self._is_process_running(server.pid):
+            return False
         try:
-            url = f"http://127.0.0.1:{server.port}/health"
-            response = await self._http_client.get(url)
-            return response.status_code == 200
+            resp = await self._http_client.get(
+                f"http://127.0.0.1:{server.port}/health"
+            )
+            return resp.status_code == 200
         except (httpx.ConnectError, httpx.TimeoutException):
             return False
         except Exception as e:
-            logger.warning(
-                f"Unexpected error checking health for server on port {server.port}: {e}"
-            )
+            logger.warning(f"Unexpected health check error (port {server.port}): {e}")
             return False
 
     # =========================================================================
