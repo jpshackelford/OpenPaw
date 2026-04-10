@@ -78,6 +78,7 @@ jobs:
             coverage.xml
             .coverage
           if-no-files-found: error
+          include-hidden-files: true
 
   complexity:
     name: Complexity
