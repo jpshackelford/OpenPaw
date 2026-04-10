@@ -30,6 +30,8 @@ dependencies = [
     "click>=8.0.0",
     "pyyaml>=6.0",
     "croniter>=2.0.0",
+    # HTTP client (for agent-server communication)
+    "httpx>=0.27.0",
     # Channel adapters
     "python-telegram-bot>=20.0",  # Telegram adapter
     "slack-bolt>=1.18.0",  # Slack adapter
