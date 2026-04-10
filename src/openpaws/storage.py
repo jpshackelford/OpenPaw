@@ -451,14 +451,15 @@ class Storage:
         self, status: str | None = None, limit: int | None = None
     ) -> list[QueueItem]:
         """List queue items, optionally filtered by status."""
+        order = "ORDER BY priority DESC, created_at ASC"
         with self._connection() as conn:
             if status:
-                query = "SELECT * FROM queue WHERE status = ? ORDER BY priority DESC, created_at ASC"
+                query = f"SELECT * FROM queue WHERE status = ? {order}"
                 if limit:
                     query += f" LIMIT {limit}"
                 rows = conn.execute(query, (status,)).fetchall()
             else:
-                query = "SELECT * FROM queue ORDER BY priority DESC, created_at ASC"
+                query = f"SELECT * FROM queue {order}"
                 if limit:
                     query += f" LIMIT {limit}"
                 rows = conn.execute(query).fetchall()

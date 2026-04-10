@@ -588,7 +588,8 @@ class TestQueueCommands:
 
     def test_queue_add_invalid_group(self, runner, config_file, isolated_env):
         """Test queue add with invalid group shows error."""
-        result = runner.invoke(main, ["queue", "add", "Test prompt", "-g", "nonexistent"])
+        args = ["queue", "add", "Test prompt", "-g", "nonexistent"]
+        result = runner.invoke(main, args)
         assert result.exit_code == 1
         assert "not found" in result.output.lower()
 
@@ -621,7 +622,9 @@ class TestQueueCommands:
         assert result.exit_code == 0
         assert "Deleted" in result.output
 
-    def test_queue_clear_all_requires_confirmation(self, runner, config_file, isolated_env):
+    def test_queue_clear_all_requires_confirmation(
+        self, runner, config_file, isolated_env
+    ):
         """Test queue clear all prompts for confirmation."""
         result = runner.invoke(main, ["queue", "clear", "-s", "all"])
         # Without -y, should prompt and abort on empty stdin
@@ -633,4 +636,3 @@ class TestQueueCommands:
         result = runner.invoke(main, ["queue", "clear", "-s", "all", "-y"])
         assert result.exit_code == 0
         assert "Deleted" in result.output
-
