@@ -152,15 +152,12 @@ class SendStatusExecutor(ToolExecutor):
         if not conversation or not hasattr(conversation, "state"):
             return None
         agent_state = getattr(conversation.state, "agent_state", None)
-        if not agent_state:
-            return None
-        ctx_data = agent_state.get("channel_context")
+        ctx_data = agent_state.get("channel_context") if agent_state else None
         if not ctx_data:
             return None
         try:
             return ChannelContext.from_dict(ctx_data)
-        except (KeyError, TypeError) as e:
-            logger.warning(f"Invalid channel_context in agent_state: {e}")
+        except (KeyError, TypeError):
             return None
 
     def _get_credential(self, conversation, credential_key: str) -> str | None:
@@ -179,43 +176,42 @@ class SendStatusExecutor(ToolExecutor):
             return get_send_callback(str(conversation.state.id))
         return None
 
-    def _try_direct_post(
-        self, action: SendStatusAction, conversation
-    ) -> SendStatusObservation | None:
-        """Try to post directly using channel_context. Returns None if not available."""
-        ctx = self._get_channel_context(conversation)
-        if not ctx:
-            return None
-
-        credential = self._get_credential(conversation, ctx.credential_key)
-        if not credential:
-            logger.warning(f"No credential found for key: {ctx.credential_key}")
-            return None
-
-        # Import here to avoid circular imports
+    def _execute_direct_post(self, ctx, message: str, credential: str) -> bool:
+        """Execute the channel posting. Returns True on success."""
         from openpaws.tools.channel_poster import post_to_channel
 
         try:
-            success = _run_async(
+            return _run_async(
                 post_to_channel(
                     channel_type=ctx.channel_type,
                     channel_id=ctx.channel_id,
-                    message=action.message,
+                    message=message,
                     thread_id=ctx.thread_id,
                     base_url=ctx.base_url,
                     credential=credential,
                 )
             )
-            if success:
-                return SendStatusObservation.from_text(
-                    text="Status message sent to channel.", sent=True
-                )
-            else:
-                logger.warning("Direct posting returned False, falling back")
-                return None
         except Exception as e:
             logger.exception(f"Direct posting failed: {e}")
+            return False
+
+    def _try_direct_post(
+        self, action: SendStatusAction, conversation
+    ) -> SendStatusObservation | None:
+        """Try to post directly using channel_context. Returns None if unavailable."""
+        ctx = self._get_channel_context(conversation)
+        if not ctx:
             return None
+        credential = self._get_credential(conversation, ctx.credential_key)
+        if not credential:
+            logger.warning(f"No credential found for key: {ctx.credential_key}")
+            return None
+        if self._execute_direct_post(ctx, action.message, credential):
+            return SendStatusObservation.from_text(
+                text="Status message sent.", sent=True
+            )
+        logger.warning("Direct posting failed, falling back")
+        return None
 
     def _try_callback(
         self, action: SendStatusAction, conversation

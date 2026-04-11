@@ -308,9 +308,11 @@ class ConversationRunner:
 
         # Store credential in secret_registry if provided
         if credential_value:
-            conv.state.secret_registry.update_secrets({
-                ctx.credential_key: credential_value,
-            })
+            conv.state.secret_registry.update_secrets(
+                {
+                    ctx.credential_key: credential_value,
+                }
+            )
             logger.debug(f"Stored credential with key {ctx.credential_key}")
 
     def _run_conversation(
@@ -348,7 +350,7 @@ class ConversationRunner:
         unregister_send_callback(conv_id)
         unregister_queue_callback(conv_id)
 
-    async def _execute_prompt_local(
+    async def _execute_prompt_local(  # length-ok
         self,
         group: GroupConfig,
         prompt: str,
@@ -378,35 +380,41 @@ class ConversationRunner:
             if conv:
                 self._unregister_callbacks(conv)
 
-    async def _execute_prompt_remote(
+    async def _execute_prompt_remote(  # length-ok
         self,
         group: GroupConfig,
         prompt: str,
         channel_context: ChannelContext | None = None,
         credential_value: str | None = None,
     ) -> ConversationResult:
-        """Execute the prompt via remote agent-server (fire-and-forget).
-
-        In remote mode, we start the conversation and return immediately.
-        The agent posts status and final response directly to the channel.
-        """
+        """Execute prompt via remote agent-server (fire-and-forget)."""
         try:
             conv_id = await self._setup_remote_conversation(
                 group, channel_context, credential_value
             )
             await self._server_manager.send_message(group.name, prompt)
             await self._server_manager.run_conversation(group.name)
-
-            # Fire-and-forget: return immediately, agent posts to channel directly
             return ConversationResult(
                 success=True,
-                message="Conversation started (response will be posted to channel)",
                 conversation_id=conv_id,
+                message="Conversation started (response will be posted to channel)",
             )
         except Exception as e:
             return self._handle_remote_error(group.name, e)
 
-    async def _setup_remote_conversation(
+    def _build_remote_context(
+        self, channel_context: ChannelContext | None, credential_value: str | None
+    ) -> dict | None:
+        """Build context dict for remote server."""
+        if not channel_context:
+            return None
+        context = {"channel_context": channel_context.to_dict()}
+        if credential_value:
+            context["credential_key"] = channel_context.credential_key
+            context["credential_value"] = credential_value
+        return context
+
+    async def _setup_remote_conversation(  # length-ok
         self,
         group: GroupConfig,
         channel_context: ChannelContext | None = None,
@@ -415,22 +423,12 @@ class ConversationRunner:
         """Set up a remote conversation on agent-server."""
         server = await self._server_manager.get_or_create_server(group.name)
         logger.info(f"Using agent-server on port {server.port} for {group.name}")
-        workspace = self._get_group_workspace(group)
-        agent_config = self._build_agent_config()
-
-        # Build context dict for remote server
-        context = {}
-        if channel_context:
-            context["channel_context"] = channel_context.to_dict()
-        if credential_value and channel_context:
-            context["credential_key"] = channel_context.credential_key
-            context["credential_value"] = credential_value
-
+        context = self._build_remote_context(channel_context, credential_value)
         conv_id = await self._server_manager.start_conversation(
             group_id=group.name,
-            agent_config=agent_config,
-            workspace=workspace,
-            context=context if context else None,
+            agent_config=self._build_agent_config(),
+            workspace=self._get_group_workspace(group),
+            context=context,
         )
         logger.info(f"Remote conversation {conv_id} for {group.name}")
         return conv_id
@@ -472,27 +470,14 @@ class ConversationRunner:
         channel_context: ChannelContext | None = None,
         credential_value: str | None = None,
     ) -> ConversationResult:
-        """Run a conversation with a prompt for a specific group.
-
-        Args:
-            group_name: Name of the group to run the conversation in.
-            prompt: The prompt/message to send to the agent.
-            conversation_id: Optional conversation ID for persistence.
-            callbacks: Optional event callbacks.
-            send_callback: Optional callback for status messages (local mode only).
-            channel_context: Optional channel context for direct posting.
-            credential_value: Credential value (bot key/token) for direct posting.
-        """
+        """Run a conversation with a prompt for a specific group."""
         group = self.config.groups.get(group_name)
         if not group:
             return self._group_not_found_result(group_name)
-
-        # Use remote servers if enabled
         if self.use_remote_servers:
             return await self._execute_prompt_remote(
                 group, prompt, channel_context, credential_value
             )
-
         return await self._execute_prompt_local(
             group,
             prompt,

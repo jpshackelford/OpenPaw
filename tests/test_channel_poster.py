@@ -242,7 +242,10 @@ class TestPostToSlack:
         """Test Slack API error handling."""
         with patch("openpaws.tools.channel_poster.httpx.AsyncClient") as mock_client:
             mock_response = MagicMock()
-            mock_response.json.return_value = {"ok": False, "error": "channel_not_found"}
+            mock_response.json.return_value = {
+                "ok": False,
+                "error": "channel_not_found",
+            }
             mock_context = AsyncMock()
             mock_context.__aenter__.return_value.post = AsyncMock(
                 return_value=mock_response

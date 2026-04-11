@@ -572,29 +572,22 @@ class Daemon:
         )
         return ctx, credential
 
-    async def _run_message_conversation(
+    async def _run_message_conversation(  # length-ok
         self, group_name: str, message: IncomingMessage
     ) -> str | None:
         """Run the conversation and return the response."""
-        # Build channel context for direct posting
-        channel_context, credential = self._build_channel_context(message)
-
+        ctx, cred = self._build_channel_context(message)
         try:
             result = await self._runner.run_message(
                 group_name=group_name,
                 message=message.text,
                 sender=message.user_name,
                 send_callback=message.send_status,
-                channel_context=channel_context,
-                credential_value=credential,
+                channel_context=ctx,
+                credential_value=cred,
             )
-            if result.success:
-                logger.info(f"Response generated for {group_name}")
-                return result.message
-            logger.error(f"Conversation failed: {result.error}")
-            return f"Sorry, I encountered an error: {result.error}"
+            return result.message if result.success else f"Error: {result.error}"
         except Exception as e:
-            logger.exception(f"Error handling message: {e}")
             return f"Sorry, something went wrong: {e}"
 
     async def _handle_message(self, message: IncomingMessage) -> str | None:

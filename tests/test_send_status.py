@@ -197,7 +197,7 @@ class TestSendStatusExecutorDirectPosting:
         assert result is None
 
     def test_get_channel_context_no_channel_context_key(self):
-        """Test _get_channel_context returns None when channel_context not in agent_state."""
+        """Test _get_channel_context returns None without channel_context."""
         executor = SendStatusExecutor()
         mock_conv = MagicMock()
         mock_conv.state = MagicMock()
