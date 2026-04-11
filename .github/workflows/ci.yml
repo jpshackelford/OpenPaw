@@ -119,7 +119,7 @@ jobs:
   quality-report:
     name: Quality Report
     runs-on: ubuntu-latest
-    needs: [test, complexity, function-length]
+    needs: [lint, test, complexity, function-length]
     if: always() && github.event_name == 'pull_request'
 
     steps:
@@ -141,8 +141,34 @@ jobs:
           name: coverage-data
         continue-on-error: true
 
+      - name: Collect failed jobs
+        id: failures
+        run: |
+          FAILED_JOBS=""
+          if [ "${{ needs.lint.result }}" = "failure" ]; then
+            FAILED_JOBS="${FAILED_JOBS}Lint,"
+          fi
+          if [ "${{ needs.test.result }}" = "failure" ]; then
+            FAILED_JOBS="${FAILED_JOBS}Tests,"
+          fi
+          if [ "${{ needs.complexity.result }}" = "failure" ]; then
+            FAILED_JOBS="${FAILED_JOBS}Complexity,"
+          fi
+          if [ "${{ needs.function-length.result }}" = "failure" ]; then
+            FAILED_JOBS="${FAILED_JOBS}Function Length,"
+          fi
+          # Remove trailing comma
+          FAILED_JOBS="${FAILED_JOBS%,}"
+          echo "failed_jobs=${FAILED_JOBS}" >> $GITHUB_OUTPUT
+
       - name: Generate quality report
-        run: python scripts/quality_report.py -o quality-report.md
+        run: |
+          if [ -n "${{ steps.failures.outputs.failed_jobs }}" ]; then
+            python scripts/quality_report.py -o quality-report.md \
+              --failed-jobs "${{ steps.failures.outputs.failed_jobs }}"
+          else
+            python scripts/quality_report.py -o quality-report.md
+          fi
 
       - name: Post quality report to PR
         uses: marocchino/sticky-pull-request-comment@v2

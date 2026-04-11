@@ -7,6 +7,7 @@ concise, actionable markdown report.
 Usage:
     python scripts/quality_report.py > quality-report.md
     python scripts/quality_report.py --output quality-report.md
+    python scripts/quality_report.py --failed-jobs "Test (Python 3.12),Lint"
 """
 
 import argparse
@@ -130,7 +131,9 @@ def coverage_emoji(current: float, baseline: float | None) -> str:
     return "✅"
 
 
-def generate_report(output_file: str | None = None) -> str:
+def generate_report(
+    output_file: str | None = None, failed_jobs: list[str] | None = None
+) -> str:
     """Generate the quality report."""
     coverage = get_coverage_data()
     baseline = get_coverage_baseline()
@@ -151,6 +154,17 @@ def generate_report(output_file: str | None = None) -> str:
     
     lines = []
     lines.append("## 📊 Quality Report\n")
+
+    # Show prominent failure banner if any jobs failed
+    if failed_jobs:
+        lines.append("### ❌ CI Checks Failed\n")
+        lines.append("The following checks failed and must be fixed:\n")
+        for job in failed_jobs:
+            lines.append(f"- 🔴 **{job}**")
+        lines.append("")
+        lines.append(
+            "> ⚠️ The metrics below may be incomplete due to job failures.\n"
+        )
     
     # Summary badges
     cov_badge = f"**Coverage:** {total_coverage:.1f}%"
@@ -229,6 +243,9 @@ def generate_report(output_file: str | None = None) -> str:
         lines.append("### ⚡ Action Items\n")
         lines.extend(action_items)
         lines.append("")
+    elif failed_jobs:
+        # Don't say "all checks passed" when there are CI failures
+        lines.append("### ⚠️ Fix CI failures above before merging.\n")
     else:
         lines.append("### ✅ All quality checks passed!\n")
     
@@ -252,9 +269,17 @@ def generate_report(output_file: str | None = None) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Generate quality report")
     parser.add_argument("--output", "-o", help="Output file (default: stdout)")
+    parser.add_argument(
+        "--failed-jobs",
+        help="Comma-separated list of failed job names to highlight",
+    )
     args = parser.parse_args()
     
-    report = generate_report(args.output)
+    failed_jobs = None
+    if args.failed_jobs:
+        failed_jobs = [j.strip() for j in args.failed_jobs.split(",") if j.strip()]
+    
+    report = generate_report(args.output, failed_jobs=failed_jobs)
     if not args.output:
         print(report)
 
