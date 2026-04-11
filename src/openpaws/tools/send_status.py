@@ -183,10 +183,16 @@ class SendStatusExecutor(ToolExecutor):
         from openpaws.tools.channel_poster import post_to_channel
 
         try:
-            return _run_async(post_to_channel(
-                channel_type=ctx.channel_type, channel_id=ctx.channel_id,
-                message=message, thread_id=ctx.thread_id,
-                base_url=ctx.base_url, credential=credential))
+            return _run_async(
+                post_to_channel(
+                    channel_type=ctx.channel_type,
+                    channel_id=ctx.channel_id,
+                    message=message,
+                    thread_id=ctx.thread_id,
+                    base_url=ctx.base_url,
+                    credential=credential,
+                )
+            )
         except Exception:
             return False
 

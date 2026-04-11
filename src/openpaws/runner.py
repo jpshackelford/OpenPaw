@@ -476,10 +476,17 @@ class ConversationRunner:
             return self._group_not_found_result(group_name)
         if self.use_remote_servers:
             return await self._execute_prompt_remote(
-                group, prompt, channel_context, credential_value)
+                group, prompt, channel_context, credential_value
+            )
         return await self._execute_prompt_local(
-            group, prompt, conversation_id, callbacks, send_callback,
-            channel_context=channel_context, credential_value=credential_value)
+            group,
+            prompt,
+            conversation_id,
+            callbacks,
+            send_callback,
+            channel_context=channel_context,
+            credential_value=credential_value,
+        )
 
     def _group_not_found_result(self, group_name: str) -> ConversationResult:
         """Return a failure result for unknown group."""
