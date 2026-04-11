@@ -14,8 +14,31 @@ import argparse
 import json
 import subprocess
 import sys
-from dataclasses import dataclass
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
 from pathlib import Path
+
+
+@dataclass
+class TestFailure:
+    """Details of a single test failure."""
+
+    test_name: str
+    classname: str
+    message: str
+    short_text: str  # First line of failure text
+
+
+@dataclass
+class TestResults:
+    """Parsed test results from JUnit XML."""
+
+    tests: int = 0
+    failures: int = 0
+    errors: int = 0
+    skipped: int = 0
+    time: float = 0.0
+    failure_details: list[TestFailure] = field(default_factory=list)
 
 
 @dataclass
@@ -34,6 +57,90 @@ def run_command(cmd: list[str]) -> tuple[int, str, str]:
     """Run a command and return (returncode, stdout, stderr)."""
     result = subprocess.run(cmd, capture_output=True, text=True)
     return result.returncode, result.stdout, result.stderr
+
+
+def get_test_results(xml_path: str = "test-results.xml") -> TestResults | None:
+    """Parse JUnit XML test results."""
+    path = Path(xml_path)
+    if not path.exists():
+        return None
+
+    try:
+        tree = ET.parse(path)
+        root = tree.getroot()
+
+        # Handle both <testsuites> and <testsuite> root elements
+        if root.tag == "testsuites":
+            # Aggregate from all testsuites
+            results = TestResults()
+            for testsuite in root.findall("testsuite"):
+                results.tests += int(testsuite.get("tests", 0))
+                results.failures += int(testsuite.get("failures", 0))
+                results.errors += int(testsuite.get("errors", 0))
+                results.skipped += int(testsuite.get("skipped", 0))
+                results.time += float(testsuite.get("time", 0))
+                _extract_failures(testsuite, results.failure_details)
+        else:
+            # Single testsuite
+            results = TestResults(
+                tests=int(root.get("tests", 0)),
+                failures=int(root.get("failures", 0)),
+                errors=int(root.get("errors", 0)),
+                skipped=int(root.get("skipped", 0)),
+                time=float(root.get("time", 0)),
+            )
+            _extract_failures(root, results.failure_details)
+
+        return results
+    except (ET.ParseError, ValueError):
+        return None
+
+
+def _extract_failures(testsuite: ET.Element, failures: list[TestFailure]) -> None:
+    """Extract failure details from a testsuite element."""
+    for testcase in testsuite.findall("testcase"):
+        failure = testcase.find("failure")
+        error = testcase.find("error")
+        fail_elem = failure if failure is not None else error
+
+        if fail_elem is not None:
+            message = fail_elem.get("message", "")
+            text = fail_elem.text or ""
+            short_text = _get_error_summary(text, message)
+
+            failures.append(
+                TestFailure(
+                    test_name=testcase.get("name", "unknown"),
+                    classname=testcase.get("classname", ""),
+                    message=message,
+                    short_text=short_text,
+                )
+            )
+
+
+def _get_error_summary(text: str, message: str) -> str:
+    """Extract a useful error summary from failure text."""
+    # Look for pytest's "E" lines which contain the actual error
+    for line in text.split("\n"):
+        line = line.strip()
+        if line.startswith("E ") and len(line) > 2:
+            return line[2:].strip()[:100]
+
+    # Look for common error patterns
+    for line in text.split("\n"):
+        line = line.strip()
+        # Skip pytest formatting lines
+        if line.startswith(">") or line.startswith("_"):
+            continue
+        # Look for exception lines
+        if "Error:" in line or "Exception:" in line or "assert " in line.lower():
+            return line[:100]
+
+    # Fall back to message attribute
+    if message:
+        return message[:100]
+
+    return ""
 
 
 def get_coverage_data() -> dict[str, float]:
@@ -131,6 +238,46 @@ def coverage_emoji(current: float, baseline: float | None) -> str:
     return "✅"
 
 
+def _add_test_failure_details(lines: list[str], results: TestResults) -> None:
+    """Add test failure details to the report."""
+    total_failed = results.failures + results.errors
+    passed = results.tests - total_failed - results.skipped
+
+    # Summary line
+    lines.append(f"#### 🧪 Test Results: {total_failed} failed, {passed} passed")
+    if results.skipped > 0:
+        lines[-1] += f", {results.skipped} skipped"
+    lines.append("")
+
+    # Show failure details (up to 10)
+    if results.failure_details:
+        lines.append("<details>")
+        lines.append("<summary>📋 Failed tests (click to expand)</summary>\n")
+
+        shown = results.failure_details[:10]
+        for fail in shown:
+            # Format: test_name (module)
+            module = fail.classname.split(".")[-1] if fail.classname else ""
+            if module:
+                lines.append(f"- `{fail.test_name}` ({module})")
+            else:
+                lines.append(f"- `{fail.test_name}`")
+
+            # Add short error message if available
+            if fail.short_text:
+                # Escape backticks and limit length
+                msg = fail.short_text.replace("`", "'")[:80]
+                lines.append(f"  > {msg}")
+
+        remaining = len(results.failure_details) - 10
+        if remaining > 0:
+            lines.append(f"\n*... and {remaining} more failures*")
+
+        lines.append("\n</details>\n")
+    else:
+        lines.append("> Check CI logs for failure details.\n")
+
+
 def generate_report(
     output_file: str | None = None, failed_jobs: list[str] | None = None
 ) -> str:
@@ -138,6 +285,7 @@ def generate_report(
     coverage = get_coverage_data()
     baseline = get_coverage_baseline()
     complexity = get_complexity_data()
+    test_results = get_test_results()
     # function_lengths = get_function_length_data()
 
     # Calculate totals
@@ -162,9 +310,19 @@ def generate_report(
         for job in failed_jobs:
             lines.append(f"- 🔴 **{job}**")
         lines.append("")
-        lines.append(
-            "> ⚠️ The metrics below may be incomplete due to job failures.\n"
-        )
+
+        # Show test failure details if tests failed and we have results
+        tests_failed = any("test" in job.lower() for job in failed_jobs)
+        if tests_failed and test_results:
+            _add_test_failure_details(lines, test_results)
+        elif tests_failed:
+            lines.append(
+                "> ⚠️ Test results not available. Check CI logs for details.\n"
+            )
+        else:
+            lines.append(
+                "> ⚠️ The metrics below may be incomplete due to job failures.\n"
+            )
     
     # Summary badges
     cov_badge = f"**Coverage:** {total_coverage:.1f}%"
