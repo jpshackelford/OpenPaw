@@ -1,14 +1,16 @@
 """Tests for SendStatusTool and related functionality."""
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from openpaws.channels.base import ChannelContext
 from openpaws.tools.send_status import (
     SendStatusAction,
     SendStatusExecutor,
     SendStatusObservation,
     SendStatusTool,
+    _run_async,
     _run_async_callback,
     get_send_callback,
     register_send_callback,
@@ -167,6 +169,275 @@ class TestSendStatusExecutor:
 
         result = executor._get_callback(mock_conv)
         assert result is None
+
+
+class TestSendStatusExecutorDirectPosting:
+    """Tests for SendStatusExecutor direct posting functionality."""
+
+    def test_get_channel_context_no_conversation(self):
+        """Test _get_channel_context returns None without conversation."""
+        executor = SendStatusExecutor()
+        result = executor._get_channel_context(None)
+        assert result is None
+
+    def test_get_channel_context_no_state(self):
+        """Test _get_channel_context returns None without state attribute."""
+        executor = SendStatusExecutor()
+        mock_conv = MagicMock(spec=[])  # No state attribute
+        result = executor._get_channel_context(mock_conv)
+        assert result is None
+
+    def test_get_channel_context_no_agent_state(self):
+        """Test _get_channel_context returns None without agent_state."""
+        executor = SendStatusExecutor()
+        mock_conv = MagicMock()
+        mock_conv.state = MagicMock()
+        mock_conv.state.agent_state = None
+        result = executor._get_channel_context(mock_conv)
+        assert result is None
+
+    def test_get_channel_context_no_channel_context_key(self):
+        """Test _get_channel_context returns None when channel_context not in agent_state."""
+        executor = SendStatusExecutor()
+        mock_conv = MagicMock()
+        mock_conv.state = MagicMock()
+        mock_conv.state.agent_state = {}
+        result = executor._get_channel_context(mock_conv)
+        assert result is None
+
+    def test_get_channel_context_valid(self):
+        """Test _get_channel_context returns ChannelContext when valid."""
+        executor = SendStatusExecutor()
+        mock_conv = MagicMock()
+        mock_conv.state = MagicMock()
+        mock_conv.state.agent_state = {
+            "channel_context": {
+                "channel_type": "campfire",
+                "channel_id": "room123",
+                "thread_id": None,
+                "base_url": "https://example.37signals.com",
+                "credential_key": "CAMPFIRE_BOT_KEY",
+            }
+        }
+        result = executor._get_channel_context(mock_conv)
+        assert result is not None
+        assert isinstance(result, ChannelContext)
+        assert result.channel_type == "campfire"
+        assert result.channel_id == "room123"
+        assert result.base_url == "https://example.37signals.com"
+
+    def test_get_channel_context_invalid_data(self):
+        """Test _get_channel_context handles invalid data gracefully."""
+        executor = SendStatusExecutor()
+        mock_conv = MagicMock()
+        mock_conv.state = MagicMock()
+        # Missing required field 'channel_id'
+        mock_conv.state.agent_state = {"channel_context": {"channel_type": "slack"}}
+        result = executor._get_channel_context(mock_conv)
+        assert result is None
+
+    def test_get_credential_no_conversation(self):
+        """Test _get_credential returns None without conversation."""
+        executor = SendStatusExecutor()
+        result = executor._get_credential(None, "TEST_KEY")
+        assert result is None
+
+    def test_get_credential_no_state(self):
+        """Test _get_credential returns None without state."""
+        executor = SendStatusExecutor()
+        mock_conv = MagicMock(spec=[])
+        result = executor._get_credential(mock_conv, "TEST_KEY")
+        assert result is None
+
+    def test_get_credential_no_secret_registry(self):
+        """Test _get_credential returns None without secret_registry."""
+        executor = SendStatusExecutor()
+        mock_conv = MagicMock()
+        mock_conv.state = MagicMock()
+        mock_conv.state.secret_registry = None
+        result = executor._get_credential(mock_conv, "TEST_KEY")
+        assert result is None
+
+    def test_get_credential_valid(self):
+        """Test _get_credential returns credential when available."""
+        executor = SendStatusExecutor()
+        mock_conv = MagicMock()
+        mock_conv.state = MagicMock()
+        mock_conv.state.secret_registry = MagicMock()
+        mock_conv.state.secret_registry.get_secrets.return_value = {
+            "BOT_KEY": "secret-token-123"
+        }
+        result = executor._get_credential(mock_conv, "BOT_KEY")
+        assert result == "secret-token-123"
+
+    def test_try_direct_post_no_context(self):
+        """Test _try_direct_post returns None without channel context."""
+        executor = SendStatusExecutor()
+        action = SendStatusAction(message="Test")
+        mock_conv = MagicMock()
+        mock_conv.state = MagicMock()
+        mock_conv.state.agent_state = {}
+
+        result = executor._try_direct_post(action, mock_conv)
+        assert result is None
+
+    def test_try_direct_post_no_credential(self):
+        """Test _try_direct_post returns None when credential is missing."""
+        executor = SendStatusExecutor()
+        action = SendStatusAction(message="Test")
+        mock_conv = MagicMock()
+        mock_conv.state = MagicMock()
+        mock_conv.state.agent_state = {
+            "channel_context": {
+                "channel_type": "slack",
+                "channel_id": "C123",
+                "credential_key": "SLACK_TOKEN",
+            }
+        }
+        mock_conv.state.secret_registry = MagicMock()
+        mock_conv.state.secret_registry.get_secrets.return_value = {}
+
+        result = executor._try_direct_post(action, mock_conv)
+        assert result is None
+
+    def test_try_direct_post_success(self):
+        """Test _try_direct_post returns observation on success."""
+        executor = SendStatusExecutor()
+        action = SendStatusAction(message="Working on it!")
+        mock_conv = MagicMock()
+        mock_conv.state = MagicMock()
+        mock_conv.state.agent_state = {
+            "channel_context": {
+                "channel_type": "slack",
+                "channel_id": "C123",
+                "credential_key": "SLACK_TOKEN",
+            }
+        }
+        mock_conv.state.secret_registry = MagicMock()
+        mock_conv.state.secret_registry.get_secrets.return_value = {
+            "SLACK_TOKEN": "xoxb-token"
+        }
+
+        with patch(
+            "openpaws.tools.channel_poster.post_to_channel", new_callable=AsyncMock
+        ) as mock_post:
+            mock_post.return_value = True
+
+            result = executor._try_direct_post(action, mock_conv)
+
+            assert result is not None
+            assert result.sent is True
+            mock_post.assert_called_once()
+
+    def test_try_direct_post_failure(self):
+        """Test _try_direct_post returns None when posting fails."""
+        executor = SendStatusExecutor()
+        action = SendStatusAction(message="Working on it!")
+        mock_conv = MagicMock()
+        mock_conv.state = MagicMock()
+        mock_conv.state.agent_state = {
+            "channel_context": {
+                "channel_type": "slack",
+                "channel_id": "C123",
+                "credential_key": "SLACK_TOKEN",
+            }
+        }
+        mock_conv.state.secret_registry = MagicMock()
+        mock_conv.state.secret_registry.get_secrets.return_value = {
+            "SLACK_TOKEN": "xoxb-token"
+        }
+
+        with patch(
+            "openpaws.tools.channel_poster.post_to_channel", new_callable=AsyncMock
+        ) as mock_post:
+            mock_post.return_value = False
+
+            result = executor._try_direct_post(action, mock_conv)
+
+            assert result is None  # Falls back to callback
+
+    def test_try_direct_post_exception(self):
+        """Test _try_direct_post returns None when exception occurs."""
+        executor = SendStatusExecutor()
+        action = SendStatusAction(message="Working on it!")
+        mock_conv = MagicMock()
+        mock_conv.state = MagicMock()
+        mock_conv.state.agent_state = {
+            "channel_context": {
+                "channel_type": "slack",
+                "channel_id": "C123",
+                "credential_key": "SLACK_TOKEN",
+            }
+        }
+        mock_conv.state.secret_registry = MagicMock()
+        mock_conv.state.secret_registry.get_secrets.return_value = {
+            "SLACK_TOKEN": "xoxb-token"
+        }
+
+        with patch(
+            "openpaws.tools.channel_poster.post_to_channel", new_callable=AsyncMock
+        ) as mock_post:
+            mock_post.side_effect = Exception("Network error")
+
+            result = executor._try_direct_post(action, mock_conv)
+
+            assert result is None
+
+    def test_executor_direct_post_priority_over_callback(self):
+        """Test that direct posting is tried before callback."""
+        messages_sent = []
+
+        async def mock_send(msg: str) -> None:
+            messages_sent.append(msg)
+
+        mock_conv = MagicMock()
+        mock_conv.state = MagicMock()
+        mock_conv.state.id = "test-conv"
+        mock_conv.state.agent_state = {
+            "channel_context": {
+                "channel_type": "slack",
+                "channel_id": "C123",
+                "credential_key": "SLACK_TOKEN",
+            }
+        }
+        mock_conv.state.secret_registry = MagicMock()
+        mock_conv.state.secret_registry.get_secrets.return_value = {
+            "SLACK_TOKEN": "xoxb-token"
+        }
+
+        # Register a callback
+        register_send_callback("test-conv", mock_send)
+
+        try:
+            executor = SendStatusExecutor()
+            action = SendStatusAction(message="Test direct!")
+
+            with patch(
+                "openpaws.tools.channel_poster.post_to_channel", new_callable=AsyncMock
+            ) as mock_post:
+                mock_post.return_value = True
+
+                result = executor(action, conversation=mock_conv)
+
+                # Direct post should succeed
+                assert result.sent is True
+                # Callback should NOT have been called
+                assert messages_sent == []
+        finally:
+            unregister_send_callback("test-conv")
+
+
+class TestRunAsync:
+    """Tests for _run_async helper."""
+
+    def test_run_async_simple_coroutine(self):
+        """Test running a simple coroutine."""
+
+        async def simple_coro():
+            return 42
+
+        result = _run_async(simple_coro())
+        assert result == 42
 
 
 class TestSendStatusTool:
