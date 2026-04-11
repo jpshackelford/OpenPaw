@@ -3,8 +3,6 @@
 This file will be removed after demonstrating the feature.
 """
 
-import pytest
-
 
 def test_this_will_fail_assertion():
     """This test fails with an assertion error."""
