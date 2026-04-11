@@ -176,23 +176,18 @@ class SendStatusExecutor(ToolExecutor):
             return get_send_callback(str(conversation.state.id))
         return None
 
-    def _execute_direct_post(self, ctx, message: str, credential: str) -> bool:
+    def _execute_direct_post(  # length-ok
+        self, ctx, message: str, credential: str
+    ) -> bool:
         """Execute the channel posting. Returns True on success."""
         from openpaws.tools.channel_poster import post_to_channel
 
         try:
-            return _run_async(
-                post_to_channel(
-                    channel_type=ctx.channel_type,
-                    channel_id=ctx.channel_id,
-                    message=message,
-                    thread_id=ctx.thread_id,
-                    base_url=ctx.base_url,
-                    credential=credential,
-                )
-            )
-        except Exception as e:
-            logger.exception(f"Direct posting failed: {e}")
+            return _run_async(post_to_channel(
+                channel_type=ctx.channel_type, channel_id=ctx.channel_id,
+                message=message, thread_id=ctx.thread_id,
+                base_url=ctx.base_url, credential=credential))
+        except Exception:
             return False
 
     def _try_direct_post(
