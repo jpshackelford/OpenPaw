@@ -1,6 +1,6 @@
 """OpenPaws - A lightweight, always-on AI assistant."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # Lazy imports to avoid slow SDK import on every `import openpaws`
 # Map: attribute name -> (module, name)
