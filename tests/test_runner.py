@@ -248,6 +248,8 @@ class TestRunMessage:
                 prompt="Hello there!",
                 conversation_id=None,
                 send_callback=None,
+                channel_context=None,
+                credential_value=None,
             )
 
 
@@ -610,74 +612,62 @@ class TestRemoteServerMethods:
         assert "max_tokens" in config
         assert "system_prompt" in config
 
-    @pytest.mark.asyncio
-    async def test_check_remote_status_not_found(self, runner_with_manager):
-        """Test _check_remote_status returns error when status is None."""
-        runner, mock_manager = runner_with_manager
-        mock_manager.get_conversation_status.return_value = None
-
-        result = await runner._check_remote_status("test-group")
-
-        assert result == "Conversation not found"
+    # NOTE: Tests for _check_remote_status, _get_remote_response were removed
+    # because those methods no longer exist. Remote mode is now fire-and-forget
+    # with direct channel posting via ChannelContext.
 
     @pytest.mark.asyncio
-    async def test_check_remote_status_completed(self, runner_with_manager):
-        """Test _check_remote_status returns response when completed."""
-        runner, mock_manager = runner_with_manager
-        mock_manager.get_conversation_status.return_value = "completed"
-
-        result = await runner._check_remote_status("test-group")
-
-        assert "completed" in result.lower() or "not yet implemented" in result.lower()
-
-    @pytest.mark.asyncio
-    async def test_check_remote_status_error(self, runner_with_manager):
-        """Test _check_remote_status returns error message on error status."""
-        runner, mock_manager = runner_with_manager
-        mock_manager.get_conversation_status.return_value = "error"
-
-        result = await runner._check_remote_status("test-group")
-
-        assert "error" in result.lower()
-
-    @pytest.mark.asyncio
-    async def test_check_remote_status_running(self, runner_with_manager):
-        """Test _check_remote_status returns None when still running."""
-        runner, mock_manager = runner_with_manager
-        mock_manager.get_conversation_status.return_value = "running"
-
-        result = await runner._check_remote_status("test-group")
-
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_get_remote_response(self, runner_with_manager):
-        """Test _get_remote_response returns placeholder response."""
-        runner, _ = runner_with_manager
-
-        result = await runner._get_remote_response("test-group")
-
-        assert "not yet implemented" in result.lower()
-
-    @pytest.mark.asyncio
-    async def test_execute_prompt_remote_success(
+    async def test_execute_prompt_remote_fire_and_forget(
         self, runner_with_manager, sample_config
     ):
-        """Test _execute_prompt_remote successful flow."""
+        """Test _execute_prompt_remote is fire-and-forget (returns immediately)."""
         from unittest.mock import MagicMock
 
         runner, mock_manager = runner_with_manager
         mock_server = MagicMock(port=18000)
         mock_manager.get_or_create_server.return_value = mock_server
         mock_manager.start_conversation.return_value = "conv-123"
-        mock_manager.get_conversation_status.return_value = "completed"
 
         group = sample_config.groups["main"]
-        result = await runner._execute_prompt_remote(group, "test prompt", None)
+        result = await runner._execute_prompt_remote(group, "test prompt")
 
         assert result.success is True
+        assert result.conversation_id == "conv-123"
+        assert "started" in result.message.lower() or "posted" in result.message.lower()
         mock_manager.send_message.assert_called_once()
         mock_manager.run_conversation.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_execute_prompt_remote_with_channel_context(
+        self, runner_with_manager, sample_config
+    ):
+        """Test _execute_prompt_remote passes channel context to server."""
+        from unittest.mock import MagicMock
+
+        from openpaws.channels.base import ChannelContext
+
+        runner, mock_manager = runner_with_manager
+        mock_server = MagicMock(port=18000)
+        mock_manager.get_or_create_server.return_value = mock_server
+        mock_manager.start_conversation.return_value = "conv-456"
+
+        ctx = ChannelContext(
+            channel_type="campfire",
+            channel_id="room123",
+            thread_id="msg456",
+            base_url="https://campfire.example.com",
+        )
+
+        group = sample_config.groups["main"]
+        result = await runner._execute_prompt_remote(
+            group, "test prompt", ctx, "bot-key-secret"
+        )
+
+        assert result.success is True
+        # Verify context was passed to start_conversation
+        call_kwargs = mock_manager.start_conversation.call_args.kwargs
+        assert "context" in call_kwargs
+        assert call_kwargs["context"]["channel_context"]["channel_type"] == "campfire"
 
     @pytest.mark.asyncio
     async def test_execute_prompt_remote_error(
@@ -688,7 +678,7 @@ class TestRemoteServerMethods:
         mock_manager.get_or_create_server.side_effect = Exception("Connection failed")
 
         group = sample_config.groups["main"]
-        result = await runner._execute_prompt_remote(group, "test prompt", None)
+        result = await runner._execute_prompt_remote(group, "test prompt")
 
         assert result.success is False
         assert "Connection failed" in result.error

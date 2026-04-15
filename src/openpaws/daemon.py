@@ -27,7 +27,12 @@ from datetime import datetime
 from pathlib import Path
 
 from openpaws.agent_server_manager import AgentServerManager
-from openpaws.channels.base import ChannelAdapter, IncomingMessage, OutgoingMessage
+from openpaws.channels.base import (
+    ChannelAdapter,
+    ChannelContext,
+    IncomingMessage,
+    OutgoingMessage,
+)
 from openpaws.channels.campfire import CampfireAdapter, CampfireConfig
 from openpaws.channels.gmail import GmailAdapter, GmailConfig
 from openpaws.channels.slack import SlackAdapter, SlackConfig
@@ -514,24 +519,75 @@ class Daemon:
         except Exception as e:
             logger.warning(f"Failed to signal processing start: {e}")
 
-    async def _run_message_conversation(
+    def _get_channel_credential(
+        self, channel_type: str, channel_name: str | None = None
+    ) -> str | None:
+        """Get the credential (bot key/token) for a channel type.
+
+        Args:
+            channel_type: Type of channel ("campfire", "slack", etc.)
+            channel_name: Optional specific channel name in config
+
+        Returns:
+            Credential string or None if not found.
+        """
+        for name, cfg in self.config.channels.items():
+            if cfg.type == channel_type:
+                if channel_name and name != channel_name:
+                    continue
+                if channel_type == "campfire":
+                    return cfg.bot_key
+                elif channel_type == "slack":
+                    return cfg.bot_token
+        return None
+
+    def _get_channel_base_url(self, channel_type: str) -> str | None:
+        """Get the base URL for a channel type (e.g., Campfire)."""
+        for cfg in self.config.channels.values():
+            if cfg.type == channel_type:
+                return getattr(cfg, "base_url", None)
+        return None
+
+    def _build_channel_context(
+        self, message: IncomingMessage
+    ) -> tuple[ChannelContext | None, str | None]:
+        """Build channel context for direct posting.
+
+        Returns:
+            Tuple of (ChannelContext, credential_value) or (None, None) if unavailable.
+        """
+        credential = self._get_channel_credential(message.channel_type)
+        if not credential:
+            logger.debug(f"No credential found for {message.channel_type}")
+            return None, None
+
+        base_url = self._get_channel_base_url(message.channel_type)
+
+        ctx = ChannelContext(
+            channel_type=message.channel_type,
+            channel_id=message.channel_id,
+            thread_id=message.thread_id,
+            base_url=base_url,
+            credential_key=f"CHANNEL_{message.channel_type.upper()}_CRED",
+        )
+        return ctx, credential
+
+    async def _run_message_conversation(  # length-ok
         self, group_name: str, message: IncomingMessage
     ) -> str | None:
         """Run the conversation and return the response."""
+        ctx, cred = self._build_channel_context(message)
         try:
             result = await self._runner.run_message(
                 group_name=group_name,
                 message=message.text,
                 sender=message.user_name,
                 send_callback=message.send_status,
+                channel_context=ctx,
+                credential_value=cred,
             )
-            if result.success:
-                logger.info(f"Response generated for {group_name}")
-                return result.message
-            logger.error(f"Conversation failed: {result.error}")
-            return f"Sorry, I encountered an error: {result.error}"
+            return result.message if result.success else f"Error: {result.error}"
         except Exception as e:
-            logger.exception(f"Error handling message: {e}")
             return f"Sorry, something went wrong: {e}"
 
     async def _handle_message(self, message: IncomingMessage) -> str | None:

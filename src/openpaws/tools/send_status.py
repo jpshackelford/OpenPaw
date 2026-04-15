@@ -2,8 +2,16 @@
 
 This tool enables the agent to communicate with the user mid-conversation,
 useful for letting them know that work is in progress before the final response.
+
+Supports two modes of operation:
+1. Direct posting: Uses channel_context from agent_state to POST directly to channel
+2. Callback registry: Falls back to registered callback (local mode only)
+
+Direct posting enables remote mode conversations to send status updates,
+since the callback registry only works when conversation runs in the same process.
 """
 
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Self
 
@@ -17,10 +25,13 @@ from openhands.sdk.tool.tool import (
 from pydantic import Field
 from rich.text import Text
 
+from openpaws.channels.base import ChannelContext
+
 if TYPE_CHECKING:
     from openhands.sdk.conversation.base import BaseConversation
     from openhands.sdk.conversation.state import ConversationState
 
+logger = logging.getLogger(__name__)
 
 # Type for the callback that sends messages
 SendCallback = Callable[[str], Awaitable[None]]
@@ -107,20 +118,57 @@ the user know you've received their message and are working on it.
 Keep status messages brief and friendly."""
 
 
-def _run_async_callback(callback, message: str) -> None:
-    """Run an async callback, handling event loop conflicts."""
+def _run_async(coro):
+    """Run an async coroutine from sync context."""
     import asyncio
     import concurrent.futures
 
     try:
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            pool.submit(asyncio.run, callback(message)).result()
-    except Exception:
-        asyncio.run(callback(message))
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(asyncio.run, coro).result()
+        return loop.run_until_complete(coro)
+    except RuntimeError:
+        return asyncio.run(coro)
+
+
+def _run_async_callback(callback, message: str) -> None:
+    """Run an async callback, handling event loop conflicts."""
+    _run_async(callback(message))
 
 
 class SendStatusExecutor(ToolExecutor):
-    """Executor that sends status messages via callback looked up from registry."""
+    """Executor that sends status messages via direct posting or callback.
+
+    Priority order:
+    1. Direct posting via channel_context (works in both local and remote mode)
+    2. Callback registry lookup (works in local mode only)
+    3. Log and return "not sent" (no channel configured)
+    """
+
+    def _get_channel_context(self, conversation) -> ChannelContext | None:
+        """Get channel context from conversation agent_state if available."""
+        if not conversation or not hasattr(conversation, "state"):
+            return None
+        agent_state = getattr(conversation.state, "agent_state", None)
+        ctx_data = agent_state.get("channel_context") if agent_state else None
+        if not ctx_data:
+            return None
+        try:
+            return ChannelContext.from_dict(ctx_data)
+        except (KeyError, TypeError):
+            return None
+
+    def _get_credential(self, conversation, credential_key: str) -> str | None:
+        """Get credential from conversation secret_registry."""
+        if not conversation or not hasattr(conversation, "state"):
+            return None
+        secret_registry = getattr(conversation.state, "secret_registry", None)
+        if not secret_registry:
+            return None
+        secrets = secret_registry.get_secrets()
+        return secrets.get(credential_key)
 
     def _get_callback(self, conversation) -> Callable | None:
         """Look up the callback from the registry using conversation ID."""
@@ -128,21 +176,75 @@ class SendStatusExecutor(ToolExecutor):
             return get_send_callback(str(conversation.state.id))
         return None
 
+    def _execute_direct_post(  # length-ok
+        self, ctx, message: str, credential: str
+    ) -> bool:
+        """Execute the channel posting. Returns True on success."""
+        from openpaws.tools.channel_poster import post_to_channel
+
+        try:
+            return _run_async(
+                post_to_channel(
+                    channel_type=ctx.channel_type,
+                    channel_id=ctx.channel_id,
+                    message=message,
+                    thread_id=ctx.thread_id,
+                    base_url=ctx.base_url,
+                    credential=credential,
+                )
+            )
+        except Exception:
+            return False
+
+    def _try_direct_post(
+        self, action: SendStatusAction, conversation
+    ) -> SendStatusObservation | None:
+        """Try to post directly using channel_context. Returns None if unavailable."""
+        ctx = self._get_channel_context(conversation)
+        if not ctx:
+            return None
+        credential = self._get_credential(conversation, ctx.credential_key)
+        if not credential:
+            logger.warning(f"No credential found for key: {ctx.credential_key}")
+            return None
+        if self._execute_direct_post(ctx, action.message, credential):
+            return SendStatusObservation.from_text(
+                text="Status message sent.", sent=True
+            )
+        logger.warning("Direct posting failed, falling back")
+        return None
+
+    def _try_callback(
+        self, action: SendStatusAction, conversation
+    ) -> SendStatusObservation | None:
+        """Try to send via callback registry. Returns None if no callback."""
+        send_callback = self._get_callback(conversation)
+        if send_callback is None:
+            return None
+
+        _run_async_callback(send_callback, action.message)
+        return SendStatusObservation.from_text(
+            text="Status message sent to user.", sent=True
+        )
+
     def __call__(
         self,
         action: SendStatusAction,
         conversation: "BaseConversation | None" = None,
     ) -> SendStatusObservation:
-        send_callback = self._get_callback(conversation)
+        # 1. Try direct posting via channel_context
+        result = self._try_direct_post(action, conversation)
+        if result:
+            return result
 
-        if send_callback is None:
-            return SendStatusObservation.from_text(
-                text="Status message logged (no channel configured).", sent=False
-            )
+        # 2. Fall back to callback registry
+        result = self._try_callback(action, conversation)
+        if result:
+            return result
 
-        _run_async_callback(send_callback, action.message)
+        # 3. No channel configured
         return SendStatusObservation.from_text(
-            text="Status message sent to user.", sent=True
+            text="Status message logged (no channel configured).", sent=False
         )
 
 
